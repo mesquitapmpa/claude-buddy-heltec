@@ -72,19 +72,26 @@ no protocolo → fed/level/50K por nível) e o contador "hoje" persiste em
 `~/.claude-buddy-bridge.json` entre restarts — a primeira leitura de um
 transcript já existente sincroniza sem creditar o histórico.
 
-## Aprovar pelo botão da placa (opcional)
+## Aprovar pelo botão da placa
+
+**Padrão (hook `PermissionRequest`):** toda pergunta de permissão que o
+terminal mostraria vai **automaticamente para a placa** enquanto a ponte
+está conectada — igual ao comportamento do app desktop. **Curto =
+aprova**, **longo = nega**. Sem resposta em 55 s (`--ask-timeout`), o
+hook devolve vazio e o prompt normal do terminal aparece — nada trava.
+Tools já permitidos pela sua configuração não perguntam (nem na placa).
+
+**Modo guardião (opcional, agressivo):**
 
 ```bash
 ./buddyctl start --ask-tools Bash,Write,Edit    # ou /pet guard
 ```
 
-Com `--ask-tools`, o PreToolUse desses tools **bloqueia** até você
-decidir na placa: **curto = aprova**, **longo = nega**. Sem resposta em
-55 s (`--ask-timeout`), o hook devolve vazio e o prompt normal do
-terminal acontece como sempre — nada trava.
+Com `--ask-tools`, o PreToolUse desses tools exige botão em **toda**
+chamada, mesmo as que a sua configuração já permitiria sem perguntar.
 
-> O guard vale para **todas** as sessões do CLI ao mesmo tempo (os hooks
-> são globais) e um prompt por vez chega à placa.
+> Os hooks são globais: vale para **todas** as sessões do CLI. Perguntas
+> simultâneas entram em **fila** — uma por vez chega à placa.
 
 > Nota: o PreToolUse dispara para *toda* chamada desses tools, inclusive
 > as que sua configuração de permissões já permitiria sem perguntar.

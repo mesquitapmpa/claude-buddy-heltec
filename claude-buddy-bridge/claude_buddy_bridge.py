@@ -79,6 +79,7 @@ class State:
         self.note_until = 0.0                    # Notification → attention
         self.pending: dict | None = None         # {id, tool, hint, future}
         self.prompt_seq = 0
+        self.prompt_lock = asyncio.Lock()        # 1 pergunta por vez na placa
         self.dirty = asyncio.Event()
         # Contadores persistidos — sobrevivem a restarts da ponte (o
         # "hoje" na placa nao zera toda vez que a ponte religa).
@@ -334,6 +335,31 @@ def summarize_tool(payload: dict) -> str:
     return tool, str(hint).replace("\n", " ")
 
 
+# Mostra a pergunta na placa e espera o botao (curto=allow, longo=deny).
+# Serializado por lock — perguntas simultaneas (varias sessoes) entram em
+# fila em vez de passar direto. Retorna "allow", "deny" ou "none".
+async def relay_prompt(tool: str, hint: str, timeout: float) -> str:
+    deadline = time.time() + timeout
+    async with STATE.prompt_lock:
+        remain = deadline - time.time()
+        if remain <= 1:
+            return "none"                        # fila comeu o tempo todo
+        STATE.prompt_seq += 1
+        fut = asyncio.get_running_loop().create_future()
+        STATE.pending = {"id": f"req_cli{STATE.prompt_seq}",
+                         "tool": tool, "hint": hint, "future": fut}
+        STATE.dirty.set()
+        print(f"[hook] aguardando botao da placa para {tool}…")
+        try:
+            decision = await asyncio.wait_for(fut, remain)
+        except asyncio.TimeoutError:
+            decision = "none"
+        STATE.pending = None
+        STATE.note_until = 0
+        STATE.dirty.set()
+        return decision
+
+
 async def handle_hook(payload: dict, ask_tools: set[str],
                       ask_timeout: float, buddy: Buddy) -> dict:
     event = payload.get("hook_event_name", "")
@@ -372,6 +398,17 @@ async def handle_hook(payload: dict, ask_tools: set[str],
         elif "waiting" in low or "input" in low:
             m = "esperando voce..."
         STATE.msg = m[:23]
+    elif event == "PermissionRequest":
+        # Dispara exatamente quando o terminal mostraria um prompt de
+        # permissao — a pergunta real. Vai sempre para a placa quando
+        # conectada; sem botao em ask_timeout s, o prompt normal aparece.
+        STATE.touch(sid, transcript=tpath)
+        tool, hint = summarize_tool(payload)
+        if buddy.connected:
+            decision = await relay_prompt(tool, hint, ask_timeout)
+            if decision in ("allow", "deny"):
+                return {"decision": decision}
+        return {}
     elif event == "PreToolUse":
         STATE.touch(sid, running=True, transcript=tpath)
         s = STATE.sessions[sid]
@@ -381,20 +418,10 @@ async def handle_hook(payload: dict, ask_tools: set[str],
         tool, hint = summarize_tool(payload)
         STATE.entries.append(f"{hhmm()} {tool} {hint}"[:80])
         STATE.msg = f"{tool}..."
-        if tool in ask_tools and buddy.connected and not STATE.pending:
-            STATE.prompt_seq += 1
-            fut = asyncio.get_running_loop().create_future()
-            STATE.pending = {"id": f"req_cli{STATE.prompt_seq}",
-                             "tool": tool, "hint": hint, "future": fut}
-            STATE.dirty.set()
-            print(f"[hook] aguardando botao da placa para {tool}…")
-            try:
-                decision = await asyncio.wait_for(fut, ask_timeout)
-            except asyncio.TimeoutError:
-                decision = "none"
-            STATE.pending = None
-            STATE.note_until = 0
-            STATE.dirty.set()
+        # Modo agressivo opcional (--ask-tools): exige botao para esses
+        # tools em TODA chamada, mesmo as que nem perguntariam.
+        if tool in ask_tools and buddy.connected:
+            decision = await relay_prompt(tool, hint, ask_timeout)
             if decision in ("allow", "deny"):
                 return {"decision": decision}
             return {}                              # timeout → fluxo normal

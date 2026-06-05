@@ -18,8 +18,9 @@ try:
 except ValueError:
     sys.exit(0)
 
-is_pre = payload.get("hook_event_name") == "PreToolUse"
-timeout = 90 if is_pre else 3
+event = payload.get("hook_event_name")
+blocking = event in ("PreToolUse", "PermissionRequest")
+timeout = 90 if blocking else 3
 
 try:
     req = urllib.request.Request(
@@ -35,12 +36,20 @@ except ValueError:
     sys.exit(0)
 
 decision = out.get("decision")
-if is_pre and decision in ("allow", "deny"):
-    print(json.dumps({
-        "hookSpecificOutput": {
+if decision in ("allow", "deny"):
+    if event == "PermissionRequest":
+        # Formato proprio do PermissionRequest: decision.behavior.
+        d = {"behavior": decision}
+        if decision == "allow":
+            d["updatedInput"] = payload.get("tool_input") or {}
+        else:
+            d["reason"] = "negado no hardware buddy"
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PermissionRequest", "decision": d}}))
+    elif event == "PreToolUse":
+        print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": decision,
             "permissionDecisionReason": "decidido no hardware buddy",
-        }
-    }))
+        }}))
 sys.exit(0)
