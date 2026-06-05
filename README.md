@@ -1,88 +1,106 @@
-# claude-esp32-heltec
+# claude-buddy-heltec 🐹
 
-Projetos para a **Heltec WiFi Kit 32 V3** (ESP32-S3, OLED 0,96") integrados ao Claude:
+**Porte do [claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy)
+(Anthropic) para a Heltec WiFi Kit 32 V3 — com ponte própria para o Claude
+Code CLI.**
 
-| Projeto | O que é |
-|---|---|
-| [`ClaudeBuddyOLED/`](ClaudeBuddyOLED/) | **Hardware buddy** — porte do [claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy) da Anthropic: pet ASCII via BLE que acompanha sessões, mostra status estilo spinner e aprova permissões pelo botão PRG |
-| [`claude-buddy-bridge/`](claude-buddy-bridge/) | Ponte BLE para o **Claude Code CLI** alimentar o buddy via hooks (`buddyctl`, `/pet`, modo guardião) |
-| `ClaudeUsageOLED/` + `claude_usage_bridge.py` | **Monitor de uso** do plano Pro/Max no OLED (projeto abaixo) |
-
----
-
-# Claude Usage Monitor — Heltec WiFi Kit 32 (V3)
-
-Monitor físico do uso do plano Claude (Pro/Max) no OLED 0,96" da placa, no
-estilo do widget de menu: anel **5H** (janela de sessão), anel **SEMANA**
-(limite semanal), tempo até o reset e o **ritmo** (ex.: `-33%` = abaixo do
-ritmo da janela). O cabeçalho alterna entre `CLAUDE MAX` e `SONNET x%`.
+Um bichinho de mesa em um ESP32-S3 com OLED que acompanha suas sessões do
+Claude via Bluetooth LE: dorme quando nada acontece, acorda quando você
+trabalha, mostra o que está rodando no estilo do spinner do CLI, fica
+impaciente quando há aprovações pendentes — e deixa você **aprovar ou negar
+permissões apertando o botão físico da placa**.
 
 ```
-CLAUDE  MAX                •
-  5H            SEMANA
- ( 6%)          ( 14%)      <- anéis de progresso
-3h00 -33%      1d15h -62%
+   /\_/\          ← 18 pets ASCII animados (gato, capivara,
+  ( o   o )         dragão, fantasma, axolote…)
+  (  w   )
+  (")_(")
+Matutando 23s 708tk    ← verbo · tempo do turno · tokens reais
+2 sess 1! hoje 117.6K  ← sessões · aguardando · tokens do dia
 ```
+
+O pet **come os tokens reais** das suas sessões (50K por nível, confete no
+level-up) e guarda stats em NVS: aprovações, negações, humor, velocidade de
+resposta.
 
 ## Como funciona
 
+O dispositivo fala o [protocolo aberto](https://github.com/anthropics/claude-desktop-buddy/blob/main/REFERENCE.md)
+do hardware buddy (JSON por linha sobre BLE Nordic UART Service, link
+criptografado com passkey). Dois jeitos de alimentá-lo:
+
 ```
-[Anthropic /api/oauth/usage] <-- HTTPS -- [ponte Python no PC] <-- HTTP LAN -- [ESP32 + OLED]
+A) App Claude Desktop (macOS/Win)          B) Claude Code CLI (este repo!)
+   Developer Mode → Hardware Buddy            hooks → ponte Python → BLE
+
+   [Claude Desktop] ──BLE──> [ESP32]          [hooks do Claude Code]
+                                                      │ HTTP 127.0.0.1:8788
+                                              [claude_buddy_bridge.py] ──BLE──> [ESP32]
 ```
 
-A **ponte** (`claude_usage_bridge.py`) lê o token OAuth que o **Claude Code**
-mantém no seu computador (Keychain no macOS ou `~/.claude/.credentials.json`
-no Linux/Windows), consulta o endpoint de uso da Anthropic e publica um JSON
-simples na rede local. O ESP32 só consome esse JSON — o token nunca vai para
-o microcontrolador.
+O caminho **B** é a novidade deste repo: o app desktop só enxerga as próprias
+sessões, então a ponte usa os **hooks do Claude Code** (SessionStart, Stop,
+PreToolUse…) para espelhar as sessões do terminal — incluindo um **modo
+guardião** em que `Bash`/`Write`/`Edit` bloqueiam até você decidir no botão
+da placa (curto = aprova, longo = nega; timeout cai no prompt normal).
 
-> O endpoint `api.anthropic.com/api/oauth/usage` é o mesmo usado pelos apps
-> de menu da comunidade, mas **não é documentado oficialmente** e pode mudar
-> ou aplicar rate limit (HTTP 429). A ponte já consulta no máximo 1x/min e
-> recua 5 min quando recebe 429.
+## Hardware
 
-## Materiais
+- **Heltec WiFi Kit 32 V3** (ESP32-S3, OLED 0,96" 128×64 SSD1306 embutido)
+- Cabo USB-C — nada para soldar
 
-- Heltec WiFi Kit 32 **V3** (ESP32-S3, OLED embutido — nada para soldar)
-- Cabo USB-C
-- PC com Python 3.8+ e **Claude Code logado** na sua conta Pro/Max
+## Quickstart
 
-## Passo 1 — Ponte no PC
+### 1. Firmware
 
 ```bash
-python3 claude_usage_bridge.py          # porta padrão 8787
+arduino-cli compile --fqbn esp32:esp32:heltec_wifi_kit_32_V3 ClaudeBuddyOLED
+arduino-cli upload -p /dev/cu.usbserial-XXXX --fqbn esp32:esp32:heltec_wifi_kit_32_V3 ClaudeBuddyOLED
 ```
 
-Teste no navegador: `http://localhost:8787/usage` deve mostrar o JSON.
-Anote o IP do PC na rede (ex.: `192.168.1.50`) e libere a porta 8787 no
-firewall se necessário. Deixe o script rodando (ou registre como serviço).
+Libs: **Adafruit SSD1306**, **Adafruit GFX**, **ArduinoJson** (core esp32 ≥ 3.x).
+Detalhes em [`ClaudeBuddyOLED/README.md`](ClaudeBuddyOLED/README.md).
 
-## Passo 2 — ESP32 (Arduino IDE)
+### 2a. Com o app Claude Desktop
 
-1. **Preferências → URLs adicionais de placas:**
-   `https://resource.heltec.cn/download/package_heltec_esp32_index.json`
-2. **Boards Manager:** instale *Heltec ESP32 Series Dev-boards* e selecione a
-   placa **WiFi Kit 32(V3)**.
-3. **Library Manager:** instale *Heltec ESP32 Dev-Boards* (traz
-   `HT_SSD1306Wire.h`) e *ArduinoJson*.
-4. Abra `ClaudeUsageOLED/ClaudeUsageOLED.ino`, edite `WIFI_SSID`,
-   `WIFI_PASS` e `BRIDGE_URL` (IP do seu PC) e grave na placa.
+Help → Troubleshooting → **Enable Developer Mode** → Developer →
+**Open Hardware Buddy…** → Connect → digite o passkey de 6 dígitos do OLED.
 
-Pinos do OLED já vêm definidos pela placa V3: `SDA_OLED=17`, `SCL_OLED=18`,
-`RST_OLED=21`, `Vext=36` (o sketch coloca `Vext` em LOW para ligar o display).
+### 2b. Com o Claude Code CLI
 
-## Problemas comuns
+```bash
+pip3 install bleak
+claude-buddy-bridge/buddyctl start
+```
 
-| Sintoma | Causa provável / solução |
+Registre os hooks no `~/.claude/settings.json` e (opcional) crie o comando
+`/pet` — snippets prontos em
+[`claude-buddy-bridge/README.md`](claude-buddy-bridge/README.md). Depois é só
+dizer "liga o pet" ou `/pet guard` dentro do Claude Code.
+
+## Estrutura
+
+| Pasta | Conteúdo |
 |---|---|
-| `Sem dados / ponte offline` | Ponte parada, IP errado em `BRIDGE_URL` ou firewall bloqueando a porta 8787. |
-| `Token expirado` | Abra o Claude Code uma vez para renovar as credenciais. |
-| `Rate limit (429)` | Normal às vezes; a ponte espera 5 min e segue o último valor. |
-| OLED apagado | Confirme placa **WiFi Kit 32(V3)** selecionada (define os pinos e o `Vext`). |
-| Display sem o `HT_SSD1306Wire.h` | Instale a lib *Heltec ESP32 Dev-Boards*; alternativa: lib ThingPulse "ESP8266 and ESP32 OLED driver for SSD1306" trocando o construtor. |
+| [`ClaudeBuddyOLED/`](ClaudeBuddyOLED/) | Firmware portado (Arduino/ESP32-S3, NimBLE, OLED mono) |
+| [`claude-buddy-bridge/`](claude-buddy-bridge/) | Ponte CLI: `claude_buddy_bridge.py` (BLE + hooks), `buddy_hook.py`, `buddyctl` |
+| [`ClaudeUsageOLED/`](ClaudeUsageOLED/) | Bônus: monitor de uso do plano Pro/Max no OLED (projeto irmão, com `claude_usage_bridge.py`) |
 
-## Segurança
+## Diferenças vs. o original (M5StickCPlus)
 
-- O JSON da ponte fica exposto **só na sua LAN** e contém apenas percentuais
-  de uso — sem token, sem conteúdo de conversas.
-- Não exponha a porta 8787 para a internet.
+| | Original | Este porte |
+|---|---|---|
+| Display | TFT colorido 135×240 | OLED mono 128×64 |
+| Personagens | ASCII + GIF | só ASCII (os 18, inalterados) |
+| IMU | shake/face-down | — (placa não tem) |
+| Botões | A + B | PRG: curto / longo (700 ms) |
+| Stack BLE | Bluedroid | NimBLE (core esp32 3.x no S3) |
+| Fonte de dados | só app desktop | app desktop **ou** Claude Code CLI |
+
+## Créditos e licença
+
+- Projeto original: [anthropics/claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy)
+  © 2026 Anthropic, PBC (MIT) — os 18 pets ASCII e o protocolo são de lá.
+- Porte Heltec V3 + ponte CLI: © 2026 Esmalie Mesquita (MIT).
+
+Licença: [MIT](LICENSE).
