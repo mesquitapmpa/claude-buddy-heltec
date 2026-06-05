@@ -16,11 +16,24 @@ alimenta dos **hooks** do CLI.
 
 ```bash
 pip3 install bleak
-python3 claude_buddy_bridge.py --owner SeuNome
+./buddyctl start          # ou: python3 claude_buddy_bridge.py --owner SeuNome
 ```
 
 Na primeira conexão o macOS pede o **passkey de 6 dígitos** mostrado no
 OLED da placa (pareamento criptografado; fica guardado).
+
+## Controle — buddyctl, /pet e frases naturais
+
+`buddyctl start|stop|status|log` gerencia a ponte em background
+(pidfile `/tmp/claude-buddy-bridge.pid`, log `/tmp/claude-buddy-bridge.log`).
+
+Dentro do Claude Code:
+
+- **`/pet`** (`~/.claude/commands/pet.md`): `on`/`off`/`status`/`guard`/`log`
+- **Frases naturais** (via `~/.claude/CLAUDE.md` global): "liga o pet",
+  "desliga o pet", "pet guard"…
+
+A ponte é opt-in: nada liga sozinho ao abrir uma sessão.
 
 ## Hooks no Claude Code
 
@@ -47,21 +60,31 @@ sempre. Pode deixar configurado permanentemente.
 | Evento no CLI | Na placa |
 |---|---|
 | Sessão aberta / prompt enviado | pet acorda, "pensando..." |
+| Turno rodando | spinner ao vivo: `Matutando 23s 708tk` (verbo rotativo, tempo e tokens reais do turno; "Pensando" durante thinking) |
 | Tools executando | transcript na linha de status |
 | Turno concluído | pet comemora 🎉 |
 | Notification (CLI pedindo permissão no terminal) | pet fica impaciente + LED pisca |
 | Sessão fechada | pet volta a dormir |
 
+Os tokens vêm do transcript JSONL de cada sessão (`transcript_path` dos
+hooks), somados a cada 2s. Eles alimentam o pet (`tokens`/`tokens_today`
+no protocolo → fed/level/50K por nível) e o contador "hoje" persiste em
+`~/.claude-buddy-bridge.json` entre restarts — a primeira leitura de um
+transcript já existente sincroniza sem creditar o histórico.
+
 ## Aprovar pelo botão da placa (opcional)
 
 ```bash
-python3 claude_buddy_bridge.py --owner SeuNome --ask-tools Bash,Write,Edit
+./buddyctl start --ask-tools Bash,Write,Edit    # ou /pet guard
 ```
 
 Com `--ask-tools`, o PreToolUse desses tools **bloqueia** até você
 decidir na placa: **curto = aprova**, **longo = nega**. Sem resposta em
 55 s (`--ask-timeout`), o hook devolve vazio e o prompt normal do
 terminal acontece como sempre — nada trava.
+
+> O guard vale para **todas** as sessões do CLI ao mesmo tempo (os hooks
+> são globais) e um prompt por vez chega à placa.
 
 > Nota: o PreToolUse dispara para *toda* chamada desses tools, inclusive
 > as que sua configuração de permissões já permitiria sem perguntar.

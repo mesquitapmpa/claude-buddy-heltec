@@ -77,12 +77,19 @@ testar sem desktop conectado.
 
 ## Telas
 
-1. **Home** — pet animado + linha de status
+1. **Home** — pet animado + duas linhas de status no estilo do spinner
+   do CLI: atividade (`Matutando 23s 708tk` — verbo, tempo do turno e
+   tokens reais) e resumo (`2 sess 1! hoje 117.6K` — sessões, waiting e
+   tokens do dia)
 2. **Stats** — level, mood, fed, aprovações/negações, tokens
 3. **Info** — nome BT, MAC, link, dicas de pareamento
 
-O OLED desliga após 5 min sem desktop e sem botão (proteção contra
-burn-in); qualquer botão/conexão religa.
+O pet come os tokens reais das sessões (50K por nível, com confete no
+level-up). O OLED desliga após 5 min sem desktop e sem botão (proteção
+contra burn-in); qualquer botão/conexão religa.
+
+> Layout: o pet fica em y=5 e o status em y=45/54 porque o bezel do
+> case 3D cobre os últimos pixels do vidro — nada útil em y≥62.
 
 ## Arquivos
 

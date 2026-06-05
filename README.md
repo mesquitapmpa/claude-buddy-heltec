@@ -1,3 +1,15 @@
+# claude-esp32-heltec
+
+Projetos para a **Heltec WiFi Kit 32 V3** (ESP32-S3, OLED 0,96") integrados ao Claude:
+
+| Projeto | O que é |
+|---|---|
+| [`ClaudeBuddyOLED/`](ClaudeBuddyOLED/) | **Hardware buddy** — porte do [claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy) da Anthropic: pet ASCII via BLE que acompanha sessões, mostra status estilo spinner e aprova permissões pelo botão PRG |
+| [`claude-buddy-bridge/`](claude-buddy-bridge/) | Ponte BLE para o **Claude Code CLI** alimentar o buddy via hooks (`buddyctl`, `/pet`, modo guardião) |
+| `ClaudeUsageOLED/` + `claude_usage_bridge.py` | **Monitor de uso** do plano Pro/Max no OLED (projeto abaixo) |
+
+---
+
 # Claude Usage Monitor — Heltec WiFi Kit 32 (V3)
 
 Monitor físico do uso do plano Claude (Pro/Max) no OLED 0,96" da placa, no
