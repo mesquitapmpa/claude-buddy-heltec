@@ -152,7 +152,7 @@ static void drawApproval() {
     display.printf("%.21s", tama.promptHint + 21);
   }
 
-  display.setCursor(0, 56);
+  display.setCursor(0, 54);
   if (responseSent) {
     display.print("enviado...");
   } else {
@@ -160,15 +160,15 @@ static void drawApproval() {
   }
 }
 
-// Duas linhas sob o pet (y=48 e 56): atividade estilo spinner do CLI
-// ("Matutando 23s 708tk", vinda da ponte no campo msg) + resumo de
-// sessoes e tokens do dia.
+// Duas linhas sob o pet (y=45 e 54 — o case cobre y>=62): atividade
+// estilo spinner do CLI ("Matutando 23s 708tk", vinda da ponte no campo
+// msg) + resumo de sessoes e tokens do dia.
 static void drawStatusLine() {
   display.setTextSize(1);
-  display.setCursor(0, 48);
+  display.setCursor(0, 45);
   if (dataConnected() || dataDemo()) {
     display.printf("%.21s", tama.msg);
-    display.setCursor(0, 56);
+    display.setCursor(0, 54);
     char t[12];
     fmtTokens(t, sizeof(t), tama.tokensToday);
     if (tama.sessionsWaiting > 0) {
@@ -208,7 +208,7 @@ static void drawStats() {
   ln("tokens %s  hoje %s", t1, t2);
   uint16_t vel = statsMedianVelocity();
   if (vel) ln("resposta media %us", vel);
-  display.setCursor(0, 56);
+  display.setCursor(0, 54);
   display.printf("longo=demo %s", dataDemo() ? "ON" : "off");
 }
 

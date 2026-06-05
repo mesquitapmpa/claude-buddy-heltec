@@ -11,12 +11,13 @@ enum { B_SLEEP, B_IDLE, B_BUSY, B_ATTENTION, B_CELEBRATE, B_DIZZY, B_HEART };
 
 // ──────────────── geometria compartilhada ────────────────
 // OLED 128x64: arte de 12 col x 5 linhas (72x40 px) centrada, corpo em
-// y=8..48, particulas (Zzz, !, coracoes) acima em y=0..8 (as primeiras
+// y=5..45, particulas (Zzz, !, coracoes) acima em y=0..5 (as primeiras
 // linhas das species costumam ser vazias, entao ha mais folga visual).
-// As duas linhas de status do .ino vivem em y=48 e y=56.
+// As duas linhas de status do .ino vivem em y=45 e y=54 — o case 3D
+// cobre os ultimos ~2px do vidro, entao nada util fica em y>=62.
 const int BUDDY_X_CENTER  = 64;
 const int BUDDY_CANVAS_W  = 128;
-const int BUDDY_Y_BASE    = 8;
+const int BUDDY_Y_BASE    = 5;
 const int BUDDY_Y_OVERLAY = 0;
 const int BUDDY_CHAR_W    = 6;
 const int BUDDY_CHAR_H    = 8;

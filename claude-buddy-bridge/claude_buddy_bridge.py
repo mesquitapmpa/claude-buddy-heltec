@@ -46,6 +46,7 @@ NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"   # dispositivo → ponte (notif
 HTTP_HOST, HTTP_PORT = "127.0.0.1", 8788
 HEARTBEAT_S = 10
 SESSION_TTL_S = 30 * 60          # esquece sessao sem atividade ha 30 min
+STATE_FILE = os.path.expanduser("~/.claude-buddy-bridge.json")
 
 
 def hhmm() -> str:
@@ -79,9 +80,28 @@ class State:
         self.pending: dict | None = None         # {id, tool, hint, future}
         self.prompt_seq = 0
         self.dirty = asyncio.Event()
-        self.tokens_total = 0                    # output tokens desde o start
+        # Contadores persistidos — sobrevivem a restarts da ponte (o
+        # "hoje" na placa nao zera toda vez que a ponte religa).
+        self.tokens_total = 0
         self.tokens_today = 0
         self.day = date.today()
+        try:
+            with open(STATE_FILE) as f:
+                st = json.load(f)
+            self.tokens_total = int(st.get("tokens_total", 0))
+            if st.get("day") == self.day.isoformat():
+                self.tokens_today = int(st.get("tokens_today", 0))
+        except (OSError, ValueError):
+            pass
+
+    def save(self) -> None:
+        try:
+            with open(STATE_FILE, "w") as f:
+                json.dump({"tokens_total": self.tokens_total,
+                           "tokens_today": self.tokens_today,
+                           "day": self.day.isoformat()}, f)
+        except OSError:
+            pass
 
     def touch(self, sid: str, running: bool | None = None,
               transcript: str | None = None) -> None:
@@ -105,6 +125,7 @@ class State:
             self.tokens_today = 0
         self.tokens_total += delta
         self.tokens_today += delta
+        self.save()
 
     # Le as linhas novas do transcript JSONL da sessao e acumula os
     # output_tokens reais das mensagens do assistente (dedup por id da
@@ -436,7 +457,10 @@ async def ticker() -> None:
             turn_tk = max(0, s["last_sum"] - s["turn_base"])
             verb = "Pensando" if s["thinking"] else \
                 VERBS[int(now / 4) % len(VERBS)]
-            msg = f"{verb} {el_s} {fmt_tk(turn_tk)}tk"
+            # OLED mostra 21 colunas — encurta o verbo antes de cortar
+            # os tokens, que sao a parte util.
+            rest = f" {el_s} {fmt_tk(turn_tk)}tk"
+            msg = verb[:21 - len(rest)] + rest
             if msg != STATE.msg:
                 STATE.msg = msg
                 changed = True
