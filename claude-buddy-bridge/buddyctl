@@ -1,0 +1,60 @@
+#!/bin/bash
+# buddyctl — liga/desliga a ponte do hardware buddy (claude_buddy_bridge.py)
+# Uso: buddyctl start [args extras p/ ponte] | stop | status | log
+set -u
+DIR="$(cd "$(dirname "$0")" && pwd)"
+PIDFILE="/tmp/claude-buddy-bridge.pid"
+LOGFILE="/tmp/claude-buddy-bridge.log"
+
+is_running() {
+  [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+}
+
+case "${1:-status}" in
+  start)
+    shift || true
+    if is_running; then
+      echo "ja rodando (pid $(cat "$PIDFILE"))"
+    else
+      nohup python3 -u "$DIR/claude_buddy_bridge.py" --owner Esmalie "$@" \
+        >> "$LOGFILE" 2>&1 &
+      echo $! > "$PIDFILE"
+      echo "ponte iniciada (pid $!) — log: $LOGFILE"
+    fi
+    # espera o BLE conectar (ate 20s) e mostra o estado
+    for _ in $(seq 1 20); do
+      sleep 1
+      ST=$(curl -sf -m 2 http://127.0.0.1:8788/status 2>/dev/null) || continue
+      if [[ "$ST" == *'"ble": true'* ]]; then
+        echo "BLE conectado: $ST"
+        exit 0
+      fi
+    done
+    echo "ponte ativa, BLE ainda procurando a placa (veja $LOGFILE)"
+    ;;
+  stop)
+    if is_running; then
+      kill "$(cat "$PIDFILE")" && rm -f "$PIDFILE"
+      echo "ponte parada"
+    else
+      rm -f "$PIDFILE"
+      echo "nao estava rodando"
+    fi
+    ;;
+  status)
+    if is_running; then
+      echo "rodando (pid $(cat "$PIDFILE"))"
+      curl -sf -m 2 http://127.0.0.1:8788/status 2>/dev/null || true
+      echo
+    else
+      echo "parada"
+    fi
+    ;;
+  log)
+    tail -20 "$LOGFILE"
+    ;;
+  *)
+    echo "uso: buddyctl start|stop|status|log" >&2
+    exit 1
+    ;;
+esac

@@ -1,0 +1,5 @@
+.DS_Store
+bin/
+claude-desktop-buddy/
+claude-usage-monitor/
+__pycache__/
