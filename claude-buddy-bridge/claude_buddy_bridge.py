@@ -28,10 +28,11 @@ Registre os hooks no ~/.claude/settings.json (veja README.md ao lado).
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, date
 
 try:
     from bleak import BleakClient, BleakScanner
@@ -51,11 +52,26 @@ def hhmm() -> str:
     return datetime.now().strftime("%H:%M")
 
 
+def fmt_tk(v: int) -> str:
+    if v >= 1_000_000:
+        return f"{v/1_000_000:.1f}M"
+    if v >= 1000:
+        return f"{v/1000:.1f}K"
+    return str(v)
+
+
+# Verbos rotativos do "spinner" da placa (so ASCII — a fonte do OLED nao
+# tem acentos). Quando o transcript mostra bloco de thinking, vira
+# "Pensando" fixo.
+VERBS = ["Matutando", "Cavoucando", "Tramando", "Cozinhando",
+         "Maquinando", "Remoendo", "Rabiscando", "Tecendo"]
+
+
 class State:
     """Estado agregado das sessoes CLI + prompt pendente no dispositivo."""
 
     def __init__(self) -> None:
-        self.sessions: dict[str, dict] = {}      # sid -> {running, last}
+        self.sessions: dict[str, dict] = {}      # sid -> {running, last, ...}
         self.entries: deque[str] = deque(maxlen=6)  # mais novo no fim
         self.msg = "CLI conectado"
         self.completed_until = 0.0
@@ -63,12 +79,89 @@ class State:
         self.pending: dict | None = None         # {id, tool, hint, future}
         self.prompt_seq = 0
         self.dirty = asyncio.Event()
+        self.tokens_total = 0                    # output tokens desde o start
+        self.tokens_today = 0
+        self.day = date.today()
 
-    def touch(self, sid: str, running: bool | None = None) -> None:
-        s = self.sessions.setdefault(sid, {"running": False, "last": 0.0})
+    def touch(self, sid: str, running: bool | None = None,
+              transcript: str | None = None) -> None:
+        s = self.sessions.setdefault(sid, {
+            "running": False, "last": 0.0, "transcript": None,
+            "offset": 0, "tok_by_id": {}, "last_sum": 0,
+            "started": None, "turn_base": 0, "thinking": False,
+        })
         s["last"] = time.time()
         if running is not None:
             s["running"] = running
+            if not running:
+                s["started"] = None
+        if transcript:
+            s["transcript"] = transcript
+
+    def add_tokens(self, delta: int) -> None:
+        today = date.today()
+        if today != self.day:
+            self.day = today
+            self.tokens_today = 0
+        self.tokens_total += delta
+        self.tokens_today += delta
+
+    # Le as linhas novas do transcript JSONL da sessao e acumula os
+    # output_tokens reais das mensagens do assistente (dedup por id da
+    # mensagem — chunks de streaming repetem o id com usage crescente).
+    def scan_session(self, s: dict) -> bool:
+        path = s.get("transcript")
+        if not path:
+            return False
+        try:
+            if os.path.getsize(path) <= s["offset"]:
+                return False
+        except OSError:
+            return False
+        # Primeira leitura de um transcript ja existente: sincroniza o
+        # contador sem creditar — senao cada restart da ponte re-credita
+        # o historico inteiro da sessao (e o pet sobe de nivel de graca).
+        baseline = s["offset"] == 0
+        try:
+            with open(path, "r", errors="replace") as f:
+                f.seek(s["offset"])
+                while True:
+                    pos = f.tell()
+                    line = f.readline()
+                    if not line:
+                        break
+                    if not line.endswith("\n"):   # linha ainda sendo escrita
+                        f.seek(pos)
+                        break
+                    try:
+                        obj = json.loads(line)
+                    except ValueError:
+                        continue
+                    if obj.get("type") != "assistant":
+                        continue
+                    m = obj.get("message") or {}
+                    mid = m.get("id") or obj.get("uuid") or "?"
+                    out = (m.get("usage") or {}).get("output_tokens") or 0
+                    if out:
+                        prev = s["tok_by_id"].get(mid, 0)
+                        if out > prev:
+                            s["tok_by_id"][mid] = out
+                    c = m.get("content")
+                    if isinstance(c, list) and c:
+                        s["thinking"] = (c[-1].get("type") == "thinking")
+                s["offset"] = f.tell()
+        except OSError:
+            return False
+        new_sum = sum(s["tok_by_id"].values())
+        delta = new_sum - s["last_sum"]
+        if delta <= 0:
+            return False
+        s["last_sum"] = new_sum
+        if baseline:
+            s["turn_base"] = new_sum
+            return False
+        self.add_tokens(delta)
+        return True
 
     def prune(self) -> None:
         now = time.time()
@@ -89,6 +182,8 @@ class State:
             "msg": (f"approve: {self.pending['tool']}" if self.pending
                     else self.msg)[:23],
             "entries": list(self.entries)[::-1],   # protocolo: mais novo 1o
+            "tokens": self.tokens_total,
+            "tokens_today": self.tokens_today,
         }
         if now < self.completed_until:
             snap["completed"] = True
@@ -222,30 +317,46 @@ async def handle_hook(payload: dict, ask_tools: set[str],
                       ask_timeout: float, buddy: Buddy) -> dict:
     event = payload.get("hook_event_name", "")
     sid = payload.get("session_id", "?")[:8]
+    tpath = payload.get("transcript_path")
 
     if event == "SessionStart":
-        STATE.touch(sid, running=False)
+        STATE.touch(sid, running=False, transcript=tpath)
         STATE.msg = "sessao aberta"
     elif event == "SessionEnd":
-        STATE.sessions.pop(sid, None)
+        s = STATE.sessions.pop(sid, None)
+        if s:
+            STATE.scan_session(s)     # ultimos tokens antes de esquecer
         STATE.msg = "sessao encerrada"
     elif event == "UserPromptSubmit":
-        STATE.touch(sid, running=True)
+        STATE.touch(sid, running=True, transcript=tpath)
+        s = STATE.sessions[sid]
+        s["started"] = time.time()
+        s["turn_base"] = s["last_sum"]
         STATE.note_until = 0          # usuario respondeu — attention some
         p = str(payload.get("prompt", ""))[:60].replace("\n", " ")
         STATE.entries.append(f"{hhmm()} {p}")
         STATE.msg = "pensando..."
     elif event == "Stop":
-        STATE.touch(sid, running=False)
+        STATE.touch(sid, running=False, transcript=tpath)
         STATE.note_until = 0          # turno acabou — attention some
         STATE.completed_until = time.time() + 6
         STATE.msg = "turno concluido"
     elif event == "Notification":
-        STATE.touch(sid)
+        STATE.touch(sid, transcript=tpath)
         STATE.note_until = time.time() + 60
-        STATE.msg = str(payload.get("message", "atencao"))[:23]
+        m = str(payload.get("message", "atencao"))
+        low = m.lower()
+        if "permission" in low:
+            m = "aprovacao no terminal"
+        elif "waiting" in low or "input" in low:
+            m = "esperando voce..."
+        STATE.msg = m[:23]
     elif event == "PreToolUse":
-        STATE.touch(sid, running=True)
+        STATE.touch(sid, running=True, transcript=tpath)
+        s = STATE.sessions[sid]
+        if s["started"] is None:      # sessao ja estava no meio de um turno
+            s["started"] = time.time()
+            s["turn_base"] = s["last_sum"]
         tool, hint = summarize_tool(payload)
         STATE.entries.append(f"{hhmm()} {tool} {hint}"[:80])
         STATE.msg = f"{tool}..."
@@ -307,6 +418,32 @@ async def http_server(ask_tools: set[str], ask_timeout: float, buddy: Buddy):
         await server.serve_forever()
 
 
+# Status estilo spinner do CLI: "Matutando 23s 708tk". Le os transcripts
+# das sessoes ativas a cada 2s, soma tokens reais e atualiza a linha de
+# status da placa enquanto algum turno roda.
+async def ticker() -> None:
+    while True:
+        await asyncio.sleep(2)
+        now = time.time()
+        changed = False
+        for s in list(STATE.sessions.values()):
+            changed |= STATE.scan_session(s)
+        run = [s for s in STATE.sessions.values() if s["running"]]
+        if run and not STATE.pending:
+            s = max(run, key=lambda x: x["last"])
+            el = int(now - (s["started"] or s["last"]))
+            el_s = f"{el//60}m{el%60:02d}" if el >= 60 else f"{el}s"
+            turn_tk = max(0, s["last_sum"] - s["turn_base"])
+            verb = "Pensando" if s["thinking"] else \
+                VERBS[int(now / 4) % len(VERBS)]
+            msg = f"{verb} {el_s} {fmt_tk(turn_tk)}tk"
+            if msg != STATE.msg:
+                STATE.msg = msg
+                changed = True
+        if changed:
+            STATE.dirty.set()
+
+
 async def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--owner", help="seu primeiro nome (aparece na placa)")
@@ -326,7 +463,8 @@ async def main() -> None:
 
     buddy = Buddy(args.owner, args.device)
     await asyncio.gather(buddy.run(),
-                         http_server(ask_tools, args.ask_timeout, buddy))
+                         http_server(ask_tools, args.ask_timeout, buddy),
+                         ticker())
 
 
 if __name__ == "__main__":

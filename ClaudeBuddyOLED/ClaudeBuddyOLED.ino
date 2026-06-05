@@ -160,11 +160,23 @@ static void drawApproval() {
   }
 }
 
+// Duas linhas sob o pet (y=48 e 56): atividade estilo spinner do CLI
+// ("Matutando 23s 708tk", vinda da ponte no campo msg) + resumo de
+// sessoes e tokens do dia.
 static void drawStatusLine() {
   display.setTextSize(1);
-  display.setCursor(0, 56);
+  display.setCursor(0, 48);
   if (dataConnected() || dataDemo()) {
     display.printf("%.21s", tama.msg);
+    display.setCursor(0, 56);
+    char t[12];
+    fmtTokens(t, sizeof(t), tama.tokensToday);
+    if (tama.sessionsWaiting > 0) {
+      display.printf("%u sess %u! hoje %s", tama.sessionsTotal,
+                     tama.sessionsWaiting, t);
+    } else {
+      display.printf("%u sess  hoje %s", tama.sessionsTotal, t);
+    }
   } else if (bleConnected()) {
     display.print("conectado, sem dados");
   } else {
