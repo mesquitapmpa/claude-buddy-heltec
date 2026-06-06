@@ -82,8 +82,9 @@ dizer "liga o pet" ou `/pet guard` dentro do Claude Code.
 
 | Pasta | Conteúdo |
 |---|---|
-| [`ClaudeBuddyOLED/`](ClaudeBuddyOLED/) | Firmware portado (Arduino/ESP32-S3, NimBLE, OLED mono) |
-| [`claude-buddy-bridge/`](claude-buddy-bridge/) | Ponte CLI: `claude_buddy_bridge.py` (BLE + hooks), `buddy_hook.py`, `buddyctl` |
+| [`ClaudeBuddyOLED/`](ClaudeBuddyOLED/) | Firmware Heltec V3 (Arduino/ESP32-S3, NimBLE, OLED mono) — **testado no hardware** |
+| [`ClaudeBuddyCardputer/`](ClaudeBuddyCardputer/) | Firmware M5Stack Cardputer Adv (colorido 240×135, teclado, IMU, speaker) — compila, aguardando hardware |
+| [`claude-buddy-bridge/`](claude-buddy-bridge/) | Ponte CLI: `claude_buddy_bridge.py` (BLE + hooks), `buddy_hook.py`, `buddyctl` — serve os dois firmwares |
 | [`ClaudeUsageOLED/`](ClaudeUsageOLED/) | Bônus: monitor de uso do plano Pro/Max no OLED (projeto irmão, com `claude_usage_bridge.py`) |
 
 ## Diferenças vs. o original (M5StickCPlus)
