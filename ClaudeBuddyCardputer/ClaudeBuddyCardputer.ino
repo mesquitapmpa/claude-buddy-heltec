@@ -232,6 +232,54 @@ static void drawPanel() {
   spr.printf("hoje %s tk", t);
 }
 
+// ───── modo de espera: aneis de uso do plano (5H + SEMANA) ─────
+static void drawRing(int cx, int cy, int r, int pct) {
+  for (int a = 0; a < 360; a += 8) {
+    float rad = (a - 90) * DEG_TO_RAD;
+    spr.drawPixel(cx + lroundf(cosf(rad) * r), cy + lroundf(sinf(rad) * r), C_DIM);
+  }
+  if (pct < 0) return;
+  if (pct > 100) pct = 100;
+  uint16_t col = (pct >= 90) ? C_HOT : (pct >= 70) ? C_YEL : C_GREEN;
+  int sweep = lroundf(360.0f * pct / 100.0f);
+  if (pct > 0 && sweep < 6) sweep = 6;
+  for (int a = 0; a <= sweep; a++) {
+    float rad = (a - 90) * DEG_TO_RAD;
+    for (int rr = r - 2; rr <= r + 2; rr++)
+      spr.drawPixel(cx + lroundf(cosf(rad) * rr), cy + lroundf(sinf(rad) * rr), col);
+  }
+}
+
+static void drawRingPct(int cx, int cy, int pct) {
+  char b[6];
+  if (pct < 0) snprintf(b, sizeof(b), "--");
+  else         snprintf(b, sizeof(b), "%d%%", pct);
+  spr.setTextSize(2);
+  spr.setTextColor(C_TEXT, C_BG);
+  spr.setCursor(cx - (int)strlen(b) * 6, cy - 7);
+  spr.print(b);
+  spr.setTextSize(1);
+}
+
+static void drawUsage() {
+  spr.setTextSize(1);
+  spr.setTextColor(C_DIM, C_BG);
+  spr.setCursor(54, 8);   spr.print("5H");
+  spr.setCursor(158, 8);  spr.print("SEMANA");
+  drawRing(60, 68, 36, tama.u5Pct);
+  drawRing(176, 68, 36, tama.uwPct);
+  drawRingPct(60, 68, tama.u5Pct);
+  drawRingPct(176, 68, tama.uwPct);
+  char b[16];
+  spr.setTextColor(C_DIM, C_BG);
+  if (tama.u5Pace != 127) snprintf(b, sizeof(b), "%s %+d%%", tama.u5Left, tama.u5Pace);
+  else                    snprintf(b, sizeof(b), "%s", tama.u5Left);
+  spr.setCursor(60 - (int)strlen(b) * 3, 118); spr.print(b);
+  if (tama.uwPace != 127) snprintf(b, sizeof(b), "%s %+d%%", tama.uwLeft, tama.uwPace);
+  else                    snprintf(b, sizeof(b), "%s", tama.uwLeft);
+  spr.setCursor(176 - (int)strlen(b) * 3, 118); spr.print(b);
+}
+
 static void drawHome() {
   // O canvas inteiro e limpo a cada render, entao o gating interno do
   // buddyTick (que so redesenha no tick de 200ms) apagaria o pet entre
@@ -477,7 +525,16 @@ void loop() {
       drawPasskey();
     } else {
       spr.fillSprite(C_BG);
-      if (screen == SCR_HOME)       drawHome();
+      if (screen == SCR_HOME) {
+        // Modo de espera: nada rodando ha 20s → alterna pet dormindo e
+        // aneis de uso do plano a cada 15s. Qualquer atividade volta.
+        bool standby = !tama.promptId[0]
+                    && tama.sessionsRunning == 0 && tama.sessionsWaiting == 0
+                    && tama.usageValid && dataConnected()
+                    && now - lastInteractMs > 20000;
+        if (standby && (now / 15000) % 2) drawUsage();
+        else                              drawHome();
+      }
       else if (screen == SCR_STATS) drawStats();
       else                          drawInfo();
     }

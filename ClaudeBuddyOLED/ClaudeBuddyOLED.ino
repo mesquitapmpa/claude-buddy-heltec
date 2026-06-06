@@ -198,6 +198,49 @@ static void drawHome() {
   drawStatusLine();
 }
 
+// ───── modo de espera: aneis de uso do plano (5H + SEMANA) ─────
+// Mesmo visual do ClaudeUsageOLED: trilho pontilhado + arco de progresso.
+static void drawRing(int cx, int cy, int r, int pct) {
+  for (int a = 0; a < 360; a += 12) {
+    float rad = (a - 90) * DEG_TO_RAD;
+    display.drawPixel(cx + lroundf(cosf(rad) * r), cy + lroundf(sinf(rad) * r), SSD1306_WHITE);
+  }
+  if (pct < 0) return;
+  if (pct > 100) pct = 100;
+  int sweep = lroundf(360.0f * pct / 100.0f);
+  if (pct > 0 && sweep < 6) sweep = 6;     // arco minimo visivel
+  for (int a = 0; a <= sweep; a++) {
+    float rad = (a - 90) * DEG_TO_RAD;
+    for (int rr = r - 1; rr <= r + 1; rr++)
+      display.drawPixel(cx + lroundf(cosf(rad) * rr), cy + lroundf(sinf(rad) * rr), SSD1306_WHITE);
+  }
+}
+
+static void drawRingPct(int cx, int cy, int pct) {
+  char b[6];
+  if (pct < 0) snprintf(b, sizeof(b), "--");
+  else         snprintf(b, sizeof(b), "%d%%", pct);
+  display.setCursor(cx - (int)strlen(b) * 3, cy - 3);
+  display.print(b);
+}
+
+static void drawUsage() {
+  display.setTextSize(1);
+  display.setCursor(26, 0); display.print("5H");
+  display.setCursor(78, 0); display.print("SEMANA");
+  drawRing(32, 33, 14, tama.u5Pct);
+  drawRing(96, 33, 14, tama.uwPct);
+  drawRingPct(32, 33, tama.u5Pct);
+  drawRingPct(96, 33, tama.uwPct);
+  char b[16];
+  if (tama.u5Pace != 127) snprintf(b, sizeof(b), "%s %+d%%", tama.u5Left, tama.u5Pace);
+  else                    snprintf(b, sizeof(b), "%s", tama.u5Left);
+  display.setCursor(2, 55); display.print(b);
+  if (tama.uwPace != 127) snprintf(b, sizeof(b), "%s %+d%%", tama.uwLeft, tama.uwPace);
+  else                    snprintf(b, sizeof(b), "%s", tama.uwLeft);
+  display.setCursor(W - (int)strlen(b) * 6 - 2, 55); display.print(b);
+}
+
 static void drawStats() {
   display.setTextSize(1);
   int y = 0;
@@ -388,7 +431,15 @@ void loop() {
     display.clearDisplay();
     if (pk)                       drawPasskey();
     else if (tama.promptId[0])    drawApproval();
-    else if (screen == SCR_HOME)  drawHome();
+    else if (screen == SCR_HOME) {
+      // Modo de espera: nada rodando ha 20s → alterna pet dormindo e
+      // aneis de uso do plano a cada 15s. Qualquer atividade volta.
+      bool standby = tama.sessionsRunning == 0 && tama.sessionsWaiting == 0
+                  && tama.usageValid && dataConnected()
+                  && now - lastInteractMs > 20000;
+      if (standby && (now / 15000) % 2) drawUsage();
+      else                              drawHome();
+    }
     else if (screen == SCR_STATS) drawStats();
     else                          drawInfo();
     display.display();

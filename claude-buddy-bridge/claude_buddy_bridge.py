@@ -29,10 +29,14 @@ import argparse
 import asyncio
 import json
 import os
+import platform
+import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from collections import deque
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 try:
     from bleak import BleakClient, BleakScanner
@@ -68,6 +72,90 @@ VERBS = ["Matutando", "Cavoucando", "Tramando", "Cozinhando",
          "Maquinando", "Remoendo", "Rabiscando", "Tecendo"]
 
 
+# ─────────────── metricas de uso do plano (5h / semanal) ───────────────
+# Mesma fonte do claude_usage_bridge.py do projeto irmao: token OAuth que
+# o Claude Code guarda no Keychain + GET api.anthropic.com/api/oauth/usage.
+# O token nunca sai deste computador; a placa so recebe os percentuais.
+
+USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+USAGE_POLL_S = 180          # 1 consulta a cada 3 min
+USAGE_BACKOFF_S = 300       # HTTP 429 → espera 5 min
+
+def _read_access_token() -> str:
+    if platform.system() == "Darwin":
+        try:
+            r = subprocess.run(
+                ["security", "find-generic-password",
+                 "-s", "Claude Code-credentials", "-w"],
+                capture_output=True, text=True, timeout=10)
+            if r.returncode == 0 and r.stdout.strip():
+                return json.loads(r.stdout.strip())["claudeAiOauth"]["accessToken"]
+        except Exception:
+            pass
+    for cand in ("~/.claude/.credentials.json",
+                 "~/.config/claude/.credentials.json"):
+        path = os.path.expanduser(cand)
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)["claudeAiOauth"]["accessToken"]
+    raise RuntimeError("credenciais do Claude Code nao encontradas")
+
+def _fmt_left(seconds) -> str:
+    if seconds is None or seconds < 0:
+        return "--"
+    total_min = int(seconds // 60)
+    d, rem = divmod(total_min, 1440)
+    h, m = divmod(rem, 60)
+    if d > 0:
+        return f"{d}d{h:02d}h"
+    if h > 0:
+        return f"{h}h{m:02d}"
+    return f"{m}m"
+
+def _usage_window(period, window_seconds):
+    """% usado, tempo ate o reset e ritmo (uso% - tempo decorrido%)."""
+    if not isinstance(period, dict) or period.get("utilization") is None:
+        return None
+    pct = round(float(period["utilization"]))
+    left, pace = "--", None
+    resets = period.get("resets_at")
+    if resets:
+        try:
+            reset = datetime.fromisoformat(str(resets).replace("Z", "+00:00"))
+            remaining = (reset - datetime.now(timezone.utc)).total_seconds()
+            left = _fmt_left(remaining)
+            if 0 <= remaining <= window_seconds:
+                elapsed_pct = (window_seconds - remaining) / window_seconds * 100.0
+                pace = int(round(float(period["utilization"]) - elapsed_pct))
+        except ValueError:
+            pass
+    return pct, left, pace
+
+def fetch_usage_blocking():
+    """Consulta sincrona — rodar via asyncio.to_thread."""
+    token = _read_access_token()
+    req = urllib.request.Request(USAGE_URL, headers={
+        "Authorization": f"Bearer {token}",
+        "anthropic-beta": "oauth-2025-04-20",
+        "Content-Type": "application/json",
+        "User-Agent": "claude-buddy-bridge/1.0",
+    })
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        raw = json.loads(resp.read().decode("utf-8"))
+    out = {}
+    five = _usage_window(raw.get("five_hour"), 5 * 3600)
+    week = _usage_window(raw.get("seven_day"), 7 * 86400)
+    if five:
+        out["u5"], out["u5l"] = five[0], five[1]
+        if five[2] is not None:
+            out["u5p"] = five[2]
+    if week:
+        out["uw"], out["uwl"] = week[0], week[1]
+        if week[2] is not None:
+            out["uwp"] = week[2]
+    return out or None
+
+
 class State:
     """Estado agregado das sessoes CLI + prompt pendente no dispositivo."""
 
@@ -81,6 +169,7 @@ class State:
         self.prompt_seq = 0
         self.prompt_lock = asyncio.Lock()        # 1 pergunta por vez na placa
         self.dirty = asyncio.Event()
+        self.usage: dict | None = None           # metricas 5h/semanal
         # Contadores persistidos — sobrevivem a restarts da ponte (o
         # "hoje" na placa nao zera toda vez que a ponte religa).
         self.tokens_total = 0
@@ -207,6 +296,8 @@ class State:
             "tokens": self.tokens_total,
             "tokens_today": self.tokens_today,
         }
+        if self.usage:
+            snap["usage"] = self.usage
         if now < self.completed_until:
             snap["completed"] = True
         if self.pending:
@@ -509,6 +600,29 @@ async def ticker() -> None:
             STATE.dirty.set()
 
 
+# Busca as metricas de uso do plano (5h/semanal) a cada 3 min e injeta no
+# heartbeat. Falhas (sem credenciais, 429, offline) so deixam a placa sem
+# a tela de metricas — nada quebra.
+async def usage_poller() -> None:
+    delay = 5                                  # primeira consulta logo apos subir
+    while True:
+        await asyncio.sleep(delay)
+        delay = USAGE_POLL_S
+        try:
+            data = await asyncio.to_thread(fetch_usage_blocking)
+            if data != STATE.usage:
+                STATE.usage = data
+                STATE.dirty.set()
+                if data:
+                    print(f"[usage] 5h={data.get('u5')}%  semana={data.get('uw')}%")
+        except urllib.error.HTTPError as e:
+            print(f"[usage] HTTP {e.code}")
+            if e.code == 429:
+                delay = USAGE_BACKOFF_S
+        except Exception as e:
+            print(f"[usage] {type(e).__name__}: {e}")
+
+
 async def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--owner", help="seu primeiro nome (aparece na placa)")
@@ -529,7 +643,8 @@ async def main() -> None:
     buddy = Buddy(args.owner, args.device)
     await asyncio.gather(buddy.run(),
                          http_server(ask_tools, args.ask_timeout, buddy),
-                         ticker())
+                         ticker(),
+                         usage_poller())
 
 
 if __name__ == "__main__":

@@ -20,6 +20,15 @@ struct TamaState {
   char     promptId[40];     // permission request pendente; vazio = sem prompt
   char     promptTool[20];
   char     promptHint[128];
+  // Metricas de uso do plano (5h / semanal), enviadas pela ponte CLI.
+  // pace 127 = sem dado.
+  bool     usageValid;
+  int16_t  u5Pct;            // -1 = sem dado
+  char     u5Left[8];
+  int8_t   u5Pace;
+  int16_t  uwPct;
+  char     uwLeft[8];
+  int8_t   uwPace;
 };
 
 // ---------------------------------------------------------------------------
@@ -111,6 +120,17 @@ static void _applyJson(const char* line, TamaState* out) {
       out->lineGen++;
     }
     out->nLines = n;
+  }
+  JsonObject u = doc["usage"];
+  if (!u.isNull()) {
+    out->u5Pct  = u["u5"] | -1;
+    out->uwPct  = u["uw"] | -1;
+    const char* l5 = u["u5l"]; const char* lw = u["uwl"];
+    strncpy(out->u5Left, l5 ? l5 : "--", sizeof(out->u5Left)-1); out->u5Left[sizeof(out->u5Left)-1]=0;
+    strncpy(out->uwLeft, lw ? lw : "--", sizeof(out->uwLeft)-1); out->uwLeft[sizeof(out->uwLeft)-1]=0;
+    out->u5Pace = u["u5p"] | 127;
+    out->uwPace = u["uwp"] | 127;
+    out->usageValid = (out->u5Pct >= 0 || out->uwPct >= 0);
   }
   JsonObject pr = doc["prompt"];
   if (!pr.isNull()) {
