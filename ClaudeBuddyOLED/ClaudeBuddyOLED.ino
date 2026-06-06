@@ -130,31 +130,40 @@ static void drawPasskey() {
   display.print("digite no desktop");
 }
 
+// A pergunta ocupa a tela toda: cabecalho com contador + tool, depois
+// 4 linhas x 21 colunas do hint (a ponte manda a descricao humana do
+// comando na frente, ate 120 chars). Hints maiores que uma pagina viram
+// paginas que trocam sozinhas a cada 3s — da para ler de longe sem
+// nenhum botao.
 static void drawApproval() {
   display.setTextSize(1);
-  display.setCursor(0, 0);
   uint32_t waited = (millis() - promptArrivedMs) / 1000;
+  display.setCursor(0, 0);
   display.printf("aprovar? %lus", (unsigned long)waited);
-  display.drawFastHLine(0, 10, W, SSD1306_WHITE);
-
-  // Nome da ferramenta grande se couber em 10 colunas (size 2)
+  // tool alinhado a direita no cabecalho
   int toolLen = strlen(tama.promptTool);
-  display.setTextSize(toolLen <= 10 ? 2 : 1);
-  display.setCursor(0, 14);
-  display.print(tama.promptTool);
-  display.setTextSize(1);
+  if (toolLen > 8) toolLen = 8;
+  display.setCursor(W - toolLen * 6, 0);
+  display.printf("%.8s", tama.promptTool);
+  display.drawFastHLine(0, 9, W, SSD1306_WHITE);
 
-  // Hint em ate 2 linhas de 21 colunas
-  display.setCursor(0, 34);
-  display.printf("%.21s", tama.promptHint);
-  if (strlen(tama.promptHint) > 21) {
-    display.setCursor(0, 43);
-    display.printf("%.21s", tama.promptHint + 21);
+  const int COLS = 21, ROWS = 4, PAGE = COLS * ROWS;
+  int hlen = strlen(tama.promptHint);
+  int nPages = (hlen + PAGE - 1) / PAGE;
+  if (nPages < 1) nPages = 1;
+  int page = (int)((millis() - promptArrivedMs) / 3000) % nPages;
+  for (int i = 0; i < ROWS; i++) {
+    int off = page * PAGE + i * COLS;
+    if (off >= hlen) break;
+    display.setCursor(0, 13 + i * 10);
+    display.printf("%.21s", tama.promptHint + off);
   }
 
   display.setCursor(0, 54);
   if (responseSent) {
     display.print("enviado...");
+  } else if (nPages > 1) {
+    display.printf("SIM | NAO longo   %d/%d", page + 1, nPages);
   } else {
     display.print("curto=SIM  longo=NAO");
   }

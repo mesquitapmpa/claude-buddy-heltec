@@ -19,7 +19,7 @@ struct TamaState {
   uint16_t lineGen;          // muda quando as linhas mudam — UI reseta o scroll
   char     promptId[40];     // permission request pendente; vazio = sem prompt
   char     promptTool[20];
-  char     promptHint[44];
+  char     promptHint[128];
 };
 
 // ---------------------------------------------------------------------------

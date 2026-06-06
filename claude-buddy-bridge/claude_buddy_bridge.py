@@ -213,7 +213,7 @@ class State:
             snap["prompt"] = {
                 "id": self.pending["id"],
                 "tool": self.pending["tool"][:18],
-                "hint": self.pending["hint"][:42],
+                "hint": self.pending["hint"][:120],
             }
         return snap
 
@@ -335,6 +335,19 @@ def summarize_tool(payload: dict) -> str:
     return tool, str(hint).replace("\n", " ")
 
 
+# Hint legivel para a tela de aprovacao: o Claude Code escreve uma
+# descricao humana de cada comando (tool_input.description) — ela vai na
+# frente, o comando cru atras. Le-se de longe sem decifrar flags.
+def prompt_hint(payload: dict) -> str:
+    ti = payload.get("tool_input") or {}
+    desc = str(ti.get("description") or "").strip()
+    raw = str(ti.get("command") or ti.get("file_path") or ti.get("url")
+              or ti.get("prompt") or "").replace("\n", " ").strip()
+    if desc and raw:
+        return f"{desc} > {raw}"
+    return desc or raw
+
+
 # Mostra a pergunta na placa e espera o botao (curto=allow, longo=deny).
 # Serializado por lock — perguntas simultaneas (varias sessoes) entram em
 # fila em vez de passar direto. Retorna "allow", "deny" ou "none".
@@ -403,7 +416,8 @@ async def handle_hook(payload: dict, ask_tools: set[str],
         # permissao — a pergunta real. Vai sempre para a placa quando
         # conectada; sem botao em ask_timeout s, o prompt normal aparece.
         STATE.touch(sid, transcript=tpath)
-        tool, hint = summarize_tool(payload)
+        tool = payload.get("tool_name", "?")
+        hint = prompt_hint(payload)
         if buddy.connected:
             decision = await relay_prompt(tool, hint, ask_timeout)
             if decision in ("allow", "deny"):
@@ -421,7 +435,7 @@ async def handle_hook(payload: dict, ask_tools: set[str],
         # Modo agressivo opcional (--ask-tools): exige botao para esses
         # tools em TODA chamada, mesmo as que nem perguntariam.
         if tool in ask_tools and buddy.connected:
-            decision = await relay_prompt(tool, hint, ask_timeout)
+            decision = await relay_prompt(tool, prompt_hint(payload), ask_timeout)
             if decision in ("allow", "deny"):
                 return {"decision": decision}
             return {}                              # timeout → fluxo normal

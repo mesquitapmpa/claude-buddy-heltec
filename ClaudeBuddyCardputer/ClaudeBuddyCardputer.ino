@@ -154,27 +154,35 @@ static void drawPasskey() {
   spr.setCursor(66, 100); spr.print("digite no desktop");
 }
 
-// Painel direito em modo aprovacao
+// Painel direito em modo aprovacao. O hint (descricao humana + comando,
+// ate 120 chars vindos da ponte) ocupa 6 linhas; mais que isso vira
+// paginas que trocam sozinhas a cada 3s — legivel de longe sem teclar.
 static void drawApproval() {
   spr.setTextSize(1);
   uint32_t waited = (millis() - promptArrivedMs) / 1000;
   spr.setTextColor(waited >= 10 ? C_HOT : C_DIM, C_BG);
   spr.setCursor(PANEL_X, 4);
   spr.printf("aprovar? %lus", (unsigned long)waited);
-
-  int toolLen = strlen(tama.promptTool);
   spr.setTextColor(C_TEXT, C_BG);
-  spr.setTextSize(toolLen <= 8 ? 2 : 1);
-  spr.setCursor(PANEL_X, 18);
-  spr.print(tama.promptTool);
-  spr.setTextSize(1);
+  spr.setCursor(PANEL_X, 16);
+  spr.printf("%.16s", tama.promptTool);
 
-  // hint em ate 4 linhas de 16 colunas
-  spr.setTextColor(C_DIM, C_BG);
+  const int COLS = 16, ROWS = 6, PAGE = COLS * ROWS;
   int hlen = strlen(tama.promptHint);
-  for (int i = 0; i < 4 && i * 16 < hlen; i++) {
-    spr.setCursor(PANEL_X, 40 + i * 10);
-    spr.printf("%.16s", tama.promptHint + i * 16);
+  int nPages = (hlen + PAGE - 1) / PAGE;
+  if (nPages < 1) nPages = 1;
+  int page = (int)((millis() - promptArrivedMs) / 3000) % nPages;
+  spr.setTextColor(C_DIM, C_BG);
+  for (int i = 0; i < ROWS; i++) {
+    int off = page * PAGE + i * COLS;
+    if (off >= hlen) break;
+    spr.setCursor(PANEL_X, 30 + i * 10);
+    spr.printf("%.16s", tama.promptHint + off);
+  }
+  if (nPages > 1) {
+    spr.setTextColor(C_DIM, C_BG);
+    spr.setCursor(W - 24, 92);
+    spr.printf("%d/%d", page + 1, nPages);
   }
 
   if (responseSent) {
