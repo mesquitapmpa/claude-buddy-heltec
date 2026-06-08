@@ -526,6 +526,17 @@ async def handle_hook(payload: dict, ask_tools: set[str],
         STATE.notice_until = 0        # ...e o aviso de pausa tambem
         STATE.completed_until = time.time() + 6
         STATE.msg = "turno concluido"
+    elif event == "PostToolUse":
+        # A ferramenta terminou. Se era uma pausa esperando voce (pergunta
+        # de multipla escolha), respondê-la no Mac dispara isto — o pet
+        # relaxa na hora em vez de esperar o aviso expirar.
+        STATE.touch(sid, running=True, transcript=tpath)
+        tool = payload.get("tool_name", "")
+        if tool in ("AskUserQuestion", "ExitPlanMode"):
+            STATE.notice_until = 0
+            STATE.note_until = 0
+            STATE.msg = "respondido"
+            STATE.dirty.set()
     elif event == "Notification":
         STATE.touch(sid, transcript=tpath)
         m = str(payload.get("message", "")).strip() or "Claude quer atencao"
