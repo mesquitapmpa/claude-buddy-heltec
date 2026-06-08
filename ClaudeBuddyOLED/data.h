@@ -29,6 +29,9 @@ struct TamaState {
   int16_t  uwPct;
   char     uwLeft[8];
   int8_t   uwPace;
+  // Aviso so-visual: pausa esperando o usuario no PC (pergunta de
+  // multipla escolha, notificacao). Vazio = sem aviso.
+  char     notice[96];
 };
 
 // ---------------------------------------------------------------------------
@@ -132,6 +135,10 @@ static void _applyJson(const char* line, TamaState* out) {
     out->uwPace = u["uwp"] | 127;
     out->usageValid = (out->u5Pct >= 0 || out->uwPct >= 0);
   }
+  const char* nt = doc["notice"];
+  strncpy(out->notice, nt ? nt : "", sizeof(out->notice)-1);
+  out->notice[sizeof(out->notice)-1] = 0;
+
   JsonObject pr = doc["prompt"];
   if (!pr.isNull()) {
     const char* pid = pr["id"]; const char* pt = pr["tool"]; const char* ph = pr["hint"];

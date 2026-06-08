@@ -280,6 +280,30 @@ static void drawUsage() {
   spr.setCursor(176 - (int)strlen(b) * 3, 118); spr.print(b);
 }
 
+// Painel direito mostrando uma pausa que o botao nao decide (pergunta de
+// multipla escolha / notificacao): texto paginado + "responda no PC".
+static void drawNotice() {
+  spr.setTextSize(1);
+  spr.setTextColor(C_HOT, C_BG);
+  spr.setCursor(PANEL_X, 4); spr.print("PRECISA DE VOCE");
+  spr.setTextColor(C_TEXT, C_BG);
+  const int COLS = 16, ROWS = 7, PAGE = COLS * ROWS;
+  int hlen = strlen(tama.notice);
+  int nPages = (hlen + PAGE - 1) / PAGE;
+  if (nPages < 1) nPages = 1;
+  int page = (millis() / 3000) % nPages;
+  for (int i = 0; i < ROWS; i++) {
+    int off = page * PAGE + i * COLS;
+    if (off >= hlen) break;
+    spr.setCursor(PANEL_X, 20 + i * 11);
+    spr.printf("%.16s", tama.notice + off);
+  }
+  spr.setTextColor(C_DIM, C_BG);
+  spr.setCursor(PANEL_X, 122);
+  if (nPages > 1) spr.printf("responda no PC %d/%d", page + 1, nPages);
+  else            spr.print("responda no PC");
+}
+
 static void drawHome() {
   // O canvas inteiro e limpo a cada render, entao o gating interno do
   // buddyTick (que so redesenha no tick de 200ms) apagaria o pet entre
@@ -288,6 +312,7 @@ static void drawHome() {
   buddyTick(activeState);
   spr.drawFastVLine(138, 4, H - 8, C_DIM);
   if (tama.promptId[0]) drawApproval();
+  else if (tama.notice[0]) drawNotice();
   else                  drawPanel();
 }
 

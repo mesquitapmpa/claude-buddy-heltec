@@ -193,9 +193,27 @@ static void drawStatusLine() {
   }
 }
 
+// Aviso de pausa esperando o usuario no PC (pergunta/notificacao que o
+// botao nao decide). Ocupa as duas linhas de status com ">>" + texto
+// paginado a cada 3s; o pet continua acima (impaciente via attention).
+static void drawNotice() {
+  display.setTextSize(1);
+  const int COLS = 21;
+  int hlen = strlen(tama.notice);
+  int nPages = (hlen + COLS - 1) / COLS;
+  if (nPages < 1) nPages = 1;
+  int page = (millis() / 3000) % nPages;
+  display.setCursor(0, 45);
+  display.printf("%.21s", tama.notice + page * COLS);
+  display.setCursor(0, 54);
+  if (nPages > 1) display.printf("responda no PC   %d/%d", page + 1, nPages);
+  else            display.print("responda no PC");
+}
+
 static void drawHome() {
   buddyTick(activeState);
-  drawStatusLine();
+  if (tama.notice[0]) drawNotice();
+  else                drawStatusLine();
 }
 
 // ───── modo de espera: aneis de uso do plano (5H + SEMANA) ─────

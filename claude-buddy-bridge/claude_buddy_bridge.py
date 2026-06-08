@@ -170,6 +170,8 @@ class State:
         self.prompt_lock = asyncio.Lock()        # 1 pergunta por vez na placa
         self.dirty = asyncio.Event()
         self.usage: dict | None = None           # metricas 5h/semanal
+        self.notice = ""                         # decisao/pergunta so-visual
+        self.notice_until = 0.0
         # Contadores persistidos — sobrevivem a restarts da ponte (o
         # "hoje" na placa nao zera toda vez que a ponte religa).
         self.tokens_total = 0
@@ -207,6 +209,15 @@ class State:
                 s["started"] = None
         if transcript:
             s["transcript"] = transcript
+
+    # Aviso so-visual: pausas que o botao nao decide (pergunta de multipla
+    # escolha, plano, notificacao) mas que o usuario precisa ver de longe.
+    # Pet fica impaciente e a placa mostra o texto; expira sozinho.
+    def set_notice(self, text: str, secs: float = 90) -> None:
+        self.notice = " ".join(text.split())
+        self.notice_until = time.time() + secs
+        self.note_until = self.notice_until      # waiting>0 → pet attention
+        self.dirty.set()
 
     def add_tokens(self, delta: int) -> None:
         today = date.today()
@@ -306,6 +317,8 @@ class State:
                 "tool": self.pending["tool"][:18],
                 "hint": self.pending["hint"][:120],
             }
+        elif now < self.notice_until and self.notice:
+            snap["notice"] = self.notice[:96]
         return snap
 
 
@@ -439,6 +452,25 @@ def prompt_hint(payload: dict) -> str:
     return desc or raw
 
 
+# Texto legivel de uma pergunta de multipla escolha (tool AskUserQuestion):
+# a pergunta + os rotulos das opcoes. O botao nao escolhe (sao N opcoes),
+# entao isto vira so um aviso visual — o usuario responde no PC.
+def ask_question_text(payload: dict) -> str:
+    ti = payload.get("tool_input") or {}
+    qs = ti.get("questions") or []
+    if not qs:
+        return "pergunta no PC"
+    q = qs[0] if isinstance(qs[0], dict) else {}
+    parts = [str(q.get("question") or q.get("header") or "pergunta")]
+    labels = [str(o.get("label")) for o in (q.get("options") or [])
+              if isinstance(o, dict) and o.get("label")]
+    if labels:
+        parts.append("Opcoes: " + " / ".join(labels))
+    if len(qs) > 1:
+        parts.append(f"(+{len(qs)-1} pergunta)")
+    return " | ".join(parts)
+
+
 # Mostra a pergunta na placa e espera o botao (curto=allow, longo=deny).
 # Serializado por lock — perguntas simultaneas (varias sessoes) entram em
 # fila em vez de passar direto. Retorna "allow", "deny" ou "none".
@@ -484,24 +516,27 @@ async def handle_hook(payload: dict, ask_tools: set[str],
         s["started"] = time.time()
         s["turn_base"] = s["last_sum"]
         STATE.note_until = 0          # usuario respondeu — attention some
+        STATE.notice_until = 0        # ...e o aviso de pausa tambem
         p = str(payload.get("prompt", ""))[:60].replace("\n", " ")
         STATE.entries.append(f"{hhmm()} {p}")
         STATE.msg = "pensando..."
     elif event == "Stop":
         STATE.touch(sid, running=False, transcript=tpath)
         STATE.note_until = 0          # turno acabou — attention some
+        STATE.notice_until = 0        # ...e o aviso de pausa tambem
         STATE.completed_until = time.time() + 6
         STATE.msg = "turno concluido"
     elif event == "Notification":
         STATE.touch(sid, transcript=tpath)
-        STATE.note_until = time.time() + 60
-        m = str(payload.get("message", "atencao"))
+        m = str(payload.get("message", "")).strip() or "Claude quer atencao"
+        STATE.set_notice(m, secs=60)             # mostra o texto real na placa
         low = m.lower()
         if "permission" in low:
-            m = "aprovacao no terminal"
+            STATE.msg = "aprovacao no terminal"
         elif "waiting" in low or "input" in low:
-            m = "esperando voce..."
-        STATE.msg = m[:23]
+            STATE.msg = "esperando voce..."
+        else:
+            STATE.msg = m[:23]
     elif event == "PermissionRequest":
         # Dispara exatamente quando o terminal mostraria um prompt de
         # permissao — a pergunta real. Vai sempre para a placa quando
@@ -523,6 +558,22 @@ async def handle_hook(payload: dict, ask_tools: set[str],
         tool, hint = summarize_tool(payload)
         STATE.entries.append(f"{hhmm()} {tool} {hint}"[:80])
         STATE.msg = f"{tool}..."
+
+        # Fallback para pausas que NAO passam por PermissionRequest:
+        # AskUserQuestion (multipla escolha — botao nao decide, so avisa)
+        # e ExitPlanMode (aprovar plano — binario, botao decide).
+        if tool == "AskUserQuestion":
+            STATE.set_notice("? " + ask_question_text(payload))
+            STATE.msg = "pergunta no PC"
+            print("[hook] pergunta do agente -> placa (responda no PC)")
+        elif tool == "ExitPlanMode" and buddy.connected:
+            ti = payload.get("tool_input") or {}
+            plan = " ".join(str(ti.get("plan") or "").replace("#", " ").split())
+            decision = await relay_prompt("Plano", plan or "aprovar plano?", ask_timeout)
+            if decision in ("allow", "deny"):
+                return {"decision": decision}
+            return {}
+
         # Modo agressivo opcional (--ask-tools): exige botao para esses
         # tools em TODA chamada, mesmo as que nem perguntariam.
         if tool in ask_tools and buddy.connected:
