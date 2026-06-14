@@ -5,10 +5,11 @@
 #define VBAT_ADC     1     // GPIO1  — leitura do divisor (ADC1_CH0)
 #define VBAT_CTRL    37    // GPIO37 — habilita o divisor (HIGH = liga; medido)
 #define VBAT_FACTOR  4.9f  // (390k+100k)/100k — ajuste fino contra multímetro
-#define VBAT_USB_V   4.35f // acima disto: provavelmente USB/carregando
 
-static float vbat = 0.0f;  // tensão suavizada (V)
-static bool  have = false;
+static float vbat  = 0.0f; // tensão suavizada (V)
+static float vslow = 0.0f; // baseline lenta p/ detectar tendência
+static bool  have  = false;
+static bool  charging = false;
 
 void batteryInit() {
   analogReadResolution(12);
@@ -30,13 +31,19 @@ static float readOnce() {
 void batteryPoll() {
   float v = readOnce();
   if (v < 1.0f) return;                       // leitura inválida (sem bateria?)
-  if (!have) { vbat = v; have = true; }
-  else        vbat += (v - vbat) * 0.25f;     // suavização exponencial
+  if (!have) { vbat = vslow = v; have = true; return; }
+  vbat  += (v - vbat) * 0.25f;                // suavização rápida
+  vslow += (vbat - vslow) * 0.05f;            // baseline lenta (tendência)
+  // Carregando = tensão subindo de forma consistente, ou perto do cheio (USB).
+  // Hysterese p/ não piscar: liga subindo/cheio, desliga caindo/baixo.
+  float trend = vbat - vslow;
+  if (trend > 0.015f || vbat >= 4.18f)       charging = true;
+  else if (trend < -0.005f || vbat < 4.10f)  charging = false;
 }
 
 bool  batteryValid() { return have; }
 float batteryVolts() { return vbat; }
-bool  batteryCharging() { return have && vbat >= VBAT_USB_V; }
+bool  batteryCharging() { return have && charging; }
 
 // Curva de descarga LiPo (1 célula) — pares {tensão, %} em ordem decrescente.
 int batteryPercent() {
