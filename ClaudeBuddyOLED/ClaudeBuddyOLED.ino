@@ -30,6 +30,7 @@
 #include "buddy.h"
 #include "stats.h"
 #include "data.h"
+#include "battery.h"
 
 // ──────────────── pinos Heltec WiFi Kit 32 V3 ────────────────
 #define PIN_VEXT     36   // LOW = liga alimentacao do OLED
@@ -38,9 +39,14 @@
 #define PIN_OLED_RST 21
 #define PIN_BTN       0   // botao PRG (LOW = pressionado)
 #define PIN_LED      35   // LED branco onboard (HIGH = aceso)
+// Bateria 1S (1200mAh): leitura no GPIO1, divisor habilitado por GPIO37
+// (ver battery.cpp). Pinos dedicados da Heltec V3 — sem conflito com o resto.
 
-const int W = 128, H = 64;
-Adafruit_SSD1306 display(W, H, &Wire, PIN_OLED_RST);
+// Portrait: o painel é 128x64 nativo, mas giramos 90° → área lógica 64x128.
+// Troque PORTRAIT_ROT entre 1 e 3 para inverter (conector USB em cima/embaixo).
+#define PORTRAIT_ROT 1
+const int W = 64, H = 128;                                // lógico (pós-rotação)
+Adafruit_SSD1306 display(128, 64, &Wire, PIN_OLED_RST);   // painel nativo
 
 // Anuncia como "Claude-XXXX" (ultimos 2 bytes do MAC BT) para distinguir
 // varias placas no picker do desktop.
@@ -116,56 +122,55 @@ static void fmtTokens(char* out, size_t n, uint32_t v) {
   else                snprintf(out, n, "%lu", (unsigned long)v);
 }
 
-static void drawPasskey() {
-  display.setTextSize(1);
-  display.setCursor(7, 4);
-  display.print("PAREAMENTO BLUETOOTH");
-  char b[8];
-  snprintf(b, sizeof(b), "%06lu", (unsigned long)blePasskey());
-  display.setTextSize(2);
-  display.setCursor((W - 6 * 12) / 2, 24);
-  display.print(b);
-  display.setTextSize(1);
-  display.setCursor(13, 52);
-  display.print("digite no desktop");
+// Desenha `s` numa única linha em y. Se couber nos W px, fica estático;
+// senão rola horizontalmente da direita p/ esquerda (pausa nas pontas).
+// Sem quebra de string: a frase inteira passa, uma linha só.
+static void drawMarquee(const char* s, int y) {
+  int px = (int)strlen(s) * 6;
+  if (px <= W) { display.setCursor(0, y); display.print(s); return; }
+  int span = px - W;
+  const int HOLD = 12;                       // frames parado em cada ponta
+  int cycle = span + 2 * HOLD;
+  int step = (int)(millis() / 120) % cycle;  // ~1px/120ms
+  int sx = step - HOLD;
+  if (sx < 0) sx = 0; else if (sx > span) sx = span;
+  display.setCursor(-sx, y);
+  display.print(s);
 }
 
-// A pergunta ocupa a tela toda: cabecalho com contador + tool, depois
-// 4 linhas x 21 colunas do hint (a ponte manda a descricao humana do
-// comando na frente, ate 120 chars). Hints maiores que uma pagina viram
-// paginas que trocam sozinhas a cada 3s — da para ler de longe sem
-// nenhum botao.
+static void drawPasskey() {
+  display.setTextSize(1);
+  display.setCursor(2, 2);  display.print("PAREAR");
+  display.setCursor(2, 11); display.print("BLUETOOTH");
+  char b[8];
+  snprintf(b, sizeof(b), "%06lu", (unsigned long)blePasskey());
+  // 6 dígitos em duas linhas de 3 (size2 = 36px, cabe nos 64).
+  display.setTextSize(2);
+  display.setCursor((W - 3 * 12) / 2, 34); display.printf("%.3s", b);
+  display.setCursor((W - 3 * 12) / 2, 56); display.print(b + 3);
+  display.setTextSize(1);
+  display.setCursor(2, 86);  display.print("digite no");
+  display.setCursor(2, 95);  display.print("desktop");
+}
+
+// Minimalista: cabeçalho (aprovar? / tool + tempo), a pergunta numa única
+// linha que rola na horizontal (a ponte manda a descrição humana do
+// comando), e o rodapé com SIM/NAO. Legível de longe, sem quebra de string.
 static void drawApproval() {
   display.setTextSize(1);
   uint32_t waited = (millis() - promptArrivedMs) / 1000;
-  display.setCursor(0, 0);
-  display.printf("aprovar? %lus", (unsigned long)waited);
-  // tool alinhado a direita no cabecalho
-  int toolLen = strlen(tama.promptTool);
-  if (toolLen > 8) toolLen = 8;
-  display.setCursor(W - toolLen * 6, 0);
-  display.printf("%.8s", tama.promptTool);
-  display.drawFastHLine(0, 9, W, SSD1306_WHITE);
+  display.setCursor(0, 0);  display.print("aprovar?");
+  display.setCursor(0, 11); display.printf("%.7s %lus", tama.promptTool, (unsigned long)waited);
+  display.drawFastHLine(0, 22, W, SSD1306_WHITE);
 
-  const int COLS = 21, ROWS = 4, PAGE = COLS * ROWS;
-  int hlen = strlen(tama.promptHint);
-  int nPages = (hlen + PAGE - 1) / PAGE;
-  if (nPages < 1) nPages = 1;
-  int page = (int)((millis() - promptArrivedMs) / 3000) % nPages;
-  for (int i = 0; i < ROWS; i++) {
-    int off = page * PAGE + i * COLS;
-    if (off >= hlen) break;
-    display.setCursor(0, 13 + i * 10);
-    display.printf("%.21s", tama.promptHint + off);
-  }
+  drawMarquee(tama.promptHint, 44);   // pergunta numa linha, rolando
 
-  display.setCursor(0, 54);
+  display.drawFastHLine(0, 98, W, SSD1306_WHITE);
   if (responseSent) {
-    display.print("enviado...");
-  } else if (nPages > 1) {
-    display.printf("SIM | NAO longo   %d/%d", page + 1, nPages);
+    display.setCursor(0, 110); display.print("enviado...");
   } else {
-    display.print("curto=SIM  longo=NAO");
+    display.setCursor(0, 106); display.print("curto=SIM");
+    display.setCursor(0, 115); display.print("longo=NAO");
   }
 }
 
@@ -174,23 +179,21 @@ static void drawApproval() {
 // msg) + resumo de sessoes e tokens do dia.
 static void drawStatusLine() {
   display.setTextSize(1);
-  display.setCursor(0, 45);
   if (dataConnected() || dataDemo()) {
-    display.printf("%.21s", tama.msg);
-    display.setCursor(0, 54);
+    drawMarquee(tama.msg, 50);          // atividade numa linha, rolando
     char t[12];
     fmtTokens(t, sizeof(t), tama.tokensToday);
-    if (tama.sessionsWaiting > 0) {
-      display.printf("%u sess %u! hoje %s", tama.sessionsTotal,
-                     tama.sessionsWaiting, t);
-    } else {
-      display.printf("%u sess  hoje %s", tama.sessionsTotal, t);
-    }
+    display.setCursor(0, 64);
+    if (tama.sessionsWaiting > 0)
+      display.printf("%u ses %u!", tama.sessionsTotal, tama.sessionsWaiting);
+    else
+      display.printf("%u sess", tama.sessionsTotal);
+    display.setCursor(0, 73);
+    display.printf("hoje %s", t);
   } else if (bleConnected()) {
-    display.print("conectado, sem dados");
-  } else {
-    display.printf("%.13s  livre", btName);
+    drawMarquee("conectado, sem dados", 64);
   }
+  // Estado ocioso (sem desktop/BLE) é tratado em drawHome: só o pet.
 }
 
 // Aviso de pausa esperando o usuario no PC (pergunta/notificacao que o
@@ -198,20 +201,45 @@ static void drawStatusLine() {
 // paginado a cada 3s; o pet continua acima (impaciente via attention).
 static void drawNotice() {
   display.setTextSize(1);
-  const int COLS = 21;
-  int hlen = strlen(tama.notice);
-  int nPages = (hlen + COLS - 1) / COLS;
-  if (nPages < 1) nPages = 1;
-  int page = (millis() / 3000) % nPages;
-  display.setCursor(0, 45);
-  display.printf("%.21s", tama.notice + page * COLS);
-  display.setCursor(0, 54);
-  if (nPages > 1) display.printf("responda no PC   %d/%d", page + 1, nPages);
-  else            display.print("responda no PC");
+  display.setCursor(0, 50); display.print(">>");
+  drawMarquee(tama.notice, 62);          // aviso numa linha, rolando
+  display.setCursor(0, 86); display.print("responda");
+  display.setCursor(0, 95); display.print("no PC");
+}
+
+// Indicador de bateria no canto superior direito (corpo 14x7 + terminal),
+// com o percentual numérico à esquerda. O preenchimento é proporcional ao %;
+// pisca quando a carga está baixa. Em USB/carregando mostra um "raio".
+static void drawBatteryIcon(int x, int y) {
+  if (!batteryValid()) return;
+  // Percentual à esquerda do ícone, alinhado à direita até x-2.
+  int pct = batteryPercent(); if (pct < 0) pct = 0;
+  char pb[6]; snprintf(pb, sizeof(pb), "%d%%", pct);
+  display.setTextSize(1); display.setTextColor(SSD1306_WHITE);
+  display.setCursor(x - (int)strlen(pb) * 6 - 2, y); display.print(pb);
+  display.drawRect(x, y, 14, 7, SSD1306_WHITE);
+  display.drawFastVLine(x + 14, y + 2, 3, SSD1306_WHITE);   // terminal +
+  if (batteryCharging()) {
+    display.fillRect(x + 1, y + 1, 12, 5, SSD1306_BLACK);
+    display.setTextSize(1); display.setTextColor(SSD1306_WHITE);
+    display.setCursor(x + 4, y); display.print('~');        // em carga
+    return;
+  }
+  int fill = (int)((pct / 100.0f) * 12 + 0.5f);
+  if (fill < 0) fill = 0; if (fill > 12) fill = 12;
+  bool blink = batteryLow() && (millis() / 500) % 2;        // pisca se baixa
+  if (!blink && fill > 0) display.fillRect(x + 1, y + 1, fill, 5, SSD1306_WHITE);
 }
 
 static void drawHome() {
+  // Ocioso (sem desktop/BLE/aviso): minimalista — só o pet centralizado
+  // verticalmente e a bateria no canto. Com atividade, pet sobe e abre
+  // espaço pro status embaixo.
+  bool live = dataConnected() || dataDemo() || bleConnected() || tama.notice[0];
+  buddySetYShift(live ? 0 : 39);
   buddyTick(activeState);
+  drawBatteryIcon(W - 16, 0);
+  if (!live) return;
   if (tama.notice[0]) drawNotice();
   else                drawStatusLine();
 }
@@ -244,19 +272,21 @@ static void drawRingPct(int cx, int cy, int pct) {
 
 static void drawUsage() {
   display.setTextSize(1);
-  display.setCursor(26, 0); display.print("5H");
-  display.setCursor(78, 0); display.print("SEMANA");
-  drawRing(32, 33, 14, tama.u5Pct);
-  drawRing(96, 33, 14, tama.uwPct);
-  drawRingPct(32, 33, tama.u5Pct);
-  drawRingPct(96, 33, tama.uwPct);
   char b[16];
+  // Portrait: dois anéis empilhados (cx=32). 5H em cima, SEMANA embaixo.
+  display.setCursor(26, 0); display.print("5H");        // 2 col centradas
+  drawRing(32, 24, 14, tama.u5Pct);
+  drawRingPct(32, 24, tama.u5Pct);
   if (tama.u5Pace != 127) snprintf(b, sizeof(b), "%s %+d%%", tama.u5Left, tama.u5Pace);
   else                    snprintf(b, sizeof(b), "%s", tama.u5Left);
-  display.setCursor(2, 55); display.print(b);
+  drawMarquee(b, 42);
+
+  display.setCursor(14, 64); display.print("SEMANA");   // 6 col centradas
+  drawRing(32, 88, 14, tama.uwPct);
+  drawRingPct(32, 88, tama.uwPct);
   if (tama.uwPace != 127) snprintf(b, sizeof(b), "%s %+d%%", tama.uwLeft, tama.uwPace);
   else                    snprintf(b, sizeof(b), "%s", tama.uwLeft);
-  display.setCursor(W - (int)strlen(b) * 6 - 2, 55); display.print(b);
+  drawMarquee(b, 106);
 }
 
 static void drawStats() {
@@ -264,7 +294,7 @@ static void drawStats() {
   int y = 0;
   auto ln = [&](const char* fmt, ...) {
     char b[24]; va_list a; va_start(a, fmt); vsnprintf(b, sizeof(b), fmt, a); va_end(a);
-    display.setCursor(0, y); display.print(b); y += 9;
+    drawMarquee(b, y); y += 11;          // linhas longas rolam, sem quebra
   };
   if (ownerName()[0]) ln("%s's %s", ownerName(), petName());
   else                ln("%s (%s)", petName(), buddySpeciesName());
@@ -278,8 +308,8 @@ static void drawStats() {
   ln("tokens %s  hoje %s", t1, t2);
   uint16_t vel = statsMedianVelocity();
   if (vel) ln("resposta media %us", vel);
-  display.setCursor(0, 54);
-  display.printf("longo=demo %s", dataDemo() ? "ON" : "off");
+  char d[18]; snprintf(d, sizeof(d), "longo=demo %s", dataDemo() ? "ON" : "off");
+  drawMarquee(d, 119);
 }
 
 static void drawInfo() {
@@ -287,21 +317,21 @@ static void drawInfo() {
   int y = 0;
   auto ln = [&](const char* fmt, ...) {
     char b[24]; va_list a; va_start(a, fmt); vsnprintf(b, sizeof(b), fmt, a); va_end(a);
-    display.setCursor(0, y); display.print(b); y += 9;
+    drawMarquee(b, y); y += 11;          // linhas longas rolam, sem quebra
   };
   ln("%s", btName);
   uint8_t mac[6] = {0};
   esp_read_mac(mac, ESP_MAC_BT);
   ln("%02X:%02X:%02X:%02X:%02X:%02X", mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
-  y += 2;
   ln("link %s%s", dataScenarioName(), bleSecure() ? " (cripto)" : "");
   uint32_t up = millis() / 1000;
-  ln("up %luh%02lum  heap %uK", up/3600, (up/60)%60, ESP.getFreeHeap()/1024);
-  y += 2;
+  ln("up %luh%02lum  h%uK", up/3600, (up/60)%60, ESP.getFreeHeap()/1024);
+  if (batteryCharging())   ln("bat %.2fv carregando", batteryVolts());
+  else if (batteryValid()) ln("bat %.2fv  %d%%", batteryVolts(), batteryPercent());
+  else                     ln("bat: lendo...");
   if (!bleConnected()) {
-    ln("Claude desktop >");
-    ln("Developer >");
-    ln("Hardware Buddy");
+    ln("emparelhar:");
+    ln("Desktop>Dev>Buddy");
   } else {
     uint32_t age = (millis() - tama.lastUpdated) / 1000;
     ln("ult. msg %lus", (unsigned long)age);
@@ -338,8 +368,12 @@ void setup() {
   pinMode(PIN_LED, OUTPUT);
   digitalWrite(PIN_LED, LOW);
 
+  batteryInit();
+  for (int i = 0; i < 5; i++) batteryPoll();   // semeia uma leitura estavel
+
   Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL, 500000);
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  display.setRotation(PORTRAIT_ROT);     // 64x128 portrait
   display.setTextWrap(false);
   display.setTextColor(SSD1306_WHITE);
 
@@ -372,6 +406,10 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
+
+  // Bateria: amostra a cada 5 s (cada leitura liga o divisor por ~3 ms).
+  static uint32_t nextBatt = 0;
+  if ((int32_t)(now - nextBatt) >= 0) { nextBatt = now + 5000; batteryPoll(); }
 
   dataPoll(&tama);
   if (statsPollLevelUp()) triggerOneShot(P_CELEBRATE, 3000);

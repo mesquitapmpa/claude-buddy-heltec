@@ -15,10 +15,17 @@ enum { B_SLEEP, B_IDLE, B_BUSY, B_ATTENTION, B_CELEBRATE, B_DIZZY, B_HEART };
 // linhas das species costumam ser vazias, entao ha mais folga visual).
 // As duas linhas de status do .ino vivem em y=45 e y=54 — o case 3D
 // cobre os ultimos ~2px do vidro, entao nada util fica em y>=62.
-const int BUDDY_X_CENTER  = 64;
-const int BUDDY_CANVAS_W  = 128;
-const int BUDDY_Y_BASE    = 5;
-const int BUDDY_Y_OVERLAY = 0;
+// Portrait 64x128: centro em x=32. A arte de 12 col (72px) extravasa ~4px de
+// cada lado e as partículas (à direita do centro) caem dentro dos 64px.
+const int BUDDY_X_CENTER  = 32;
+const int BUDDY_CANVAS_W  = 64;
+int BUDDY_Y_BASE    = 5;   // deslocado por buddySetYShift (topo padrão = 5/0)
+int BUDDY_Y_OVERLAY = 0;
+static const int BUDDY_Y_BASE0 = 5, BUDDY_Y_OVERLAY0 = 0;
+void buddySetYShift(int d) {
+  BUDDY_Y_BASE    = BUDDY_Y_BASE0    + d;
+  BUDDY_Y_OVERLAY = BUDDY_Y_OVERLAY0 + d;
+}
 const int BUDDY_CHAR_W    = 6;
 const int BUDDY_CHAR_H    = 8;
 

@@ -8,10 +8,14 @@
 // Geometry — shared layout for all species
 extern const int BUDDY_X_CENTER;
 extern const int BUDDY_CANVAS_W;
-extern const int BUDDY_Y_BASE;
-extern const int BUDDY_Y_OVERLAY;
+extern int BUDDY_Y_BASE;       // deslocável p/ centrar o pet (ver buddySetYShift)
+extern int BUDDY_Y_OVERLAY;
 extern const int BUDDY_CHAR_W;
 extern const int BUDDY_CHAR_H;
+
+// Desloca o pet (corpo + partículas) `d` px p/ baixo do topo padrão.
+// d=0 = topo (com status embaixo); d>0 = centralizado verticalmente.
+void buddySetYShift(int d);
 
 // Common colors species can use freely
 extern const uint16_t BUDDY_BG;

@@ -9,6 +9,8 @@ void buddyInit();
 // Avanca a animacao (5 fps interno) e desenha a species atual no display.
 // O chamador limpa o framebuffer e chama display.display().
 void buddyTick(uint8_t personaState);
+// Desloca o pet `d` px p/ baixo do topo padrão (0=topo, >0=centralizado).
+void buddySetYShift(int d);
 void buddySetSpecies(const char* name);
 void buddySetSpeciesIdx(uint8_t idx);
 void buddyNextSpecies();
