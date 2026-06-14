@@ -34,11 +34,13 @@ void batteryPoll() {
   if (!have) { vbat = vslow = v; have = true; return; }
   vbat  += (v - vbat) * 0.25f;                // suavização rápida
   vslow += (vbat - vslow) * 0.05f;            // baseline lenta (tendência)
-  // Carregando = tensão subindo de forma consistente, ou perto do cheio (USB).
-  // Hysterese p/ não piscar: liga subindo/cheio, desliga caindo/baixo.
+  // Carregando = tensão subindo, ou alta o bastante (típico de USB/carregador).
+  // Sem pino de status de carga na placa, isto é heurística: como o buddy fica
+  // quase sempre no USB, priorizo detectar "plugado" (limiar 4.05V). Pode dar
+  // falso-positivo curto logo após desplugar (até a tensão cair < ~4.0V).
   float trend = vbat - vslow;
-  if (trend > 0.015f || vbat >= 4.18f)       charging = true;
-  else if (trend < -0.005f || vbat < 4.10f)  charging = false;
+  if (trend > 0.008f || vbat >= 4.05f)            charging = true;
+  else if (trend < -0.008f && vbat < 4.00f)       charging = false;
 }
 
 bool  batteryValid() { return have; }
