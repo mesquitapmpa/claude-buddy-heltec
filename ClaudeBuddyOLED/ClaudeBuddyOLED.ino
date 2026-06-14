@@ -31,6 +31,7 @@
 #include "stats.h"
 #include "data.h"
 #include "battery.h"
+#include "ota.h"
 
 // ──────────────── pinos Heltec WiFi Kit 32 V3 ────────────────
 #define PIN_VEXT     36   // LOW = liga alimentacao do OLED
@@ -329,6 +330,7 @@ static void drawInfo() {
   if (batteryCharging())   ln("bat %.2fv carregando", batteryVolts());
   else if (batteryValid()) ln("bat %.2fv  %d%%", batteryVolts(), batteryPercent());
   else                     ln("bat: lendo...");
+  ln("ota %s", otaStatus());
   if (!bleConnected()) {
     ln("emparelhar:");
     ln("Desktop>Dev>Buddy");
@@ -337,6 +339,20 @@ static void drawInfo() {
     ln("ult. msg %lus", (unsigned long)age);
     ln("estado %s", stateNames[activeState]);
   }
+}
+
+// Tela de progresso da gravação OTA — prioridade máxima durante o update.
+static void drawOTA() {
+  display.setTextSize(1);
+  display.setCursor(0, 18); display.print("OTA WiFi");
+  int p = otaProgress(); if (p < 0) p = 0; if (p > 100) p = 100;
+  display.drawRect(4, 46, 56, 12, SSD1306_WHITE);
+  display.fillRect(6, 48, (int)(52 * p / 100.0f + 0.5f), 8, SSD1306_WHITE);
+  char b[8]; snprintf(b, sizeof(b), "%d%%", p);
+  display.setTextSize(2);
+  display.setCursor((W - (int)strlen(b) * 12) / 2, 74); display.print(b);
+  display.setTextSize(1);
+  drawMarquee("gravando, nao desligue", 104);
 }
 
 // ──────────────── botao PRG ────────────────
@@ -382,6 +398,7 @@ void setup() {
   petNameLoad();
   buddyInit();
   startBt();
+  otaInit(btName);          // WiFi OTA (inerte sem secrets.h válido)
   lastInteractMs = millis();
 
   // Splash
@@ -406,6 +423,9 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
+
+  otaHandle();              // WiFi OTA: conecta em background, grava sem fio
+  if (otaProgress() >= 0 && screenOff) wake();   // acorda a tela p/ mostrar o update
 
   // Bateria: amostra a cada 5 s (cada leitura liga o divisor por ~3 ms).
   static uint32_t nextBatt = 0;
@@ -475,7 +495,7 @@ void loop() {
 
   // Desliga o OLED apos inatividade sem desktop conectado (burn-in).
   // Conectado, o pet fica visivel — e a razao de existir do buddy.
-  if (!screenOff && !inPrompt && !dataConnected() && !pk
+  if (!screenOff && !inPrompt && !dataConnected() && !pk && otaProgress() < 0
       && now - lastInteractMs > SCREEN_OFF_MS) {
     sleepScreen();
   }
@@ -485,7 +505,8 @@ void loop() {
   if (!screenOff && (int32_t)(now - nextRender) >= 0) {
     nextRender = now + 100;
     display.clearDisplay();
-    if (pk)                       drawPasskey();
+    if (otaProgress() >= 0)       drawOTA();
+    else if (pk)                  drawPasskey();
     else if (tama.promptId[0])    drawApproval();
     else if (screen == SCR_HOME) {
       // Modo de espera: nada rodando ha 20s → alterna pet dormindo e

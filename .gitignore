@@ -3,3 +3,4 @@ bin/
 claude-desktop-buddy/
 claude-usage-monitor/
 __pycache__/
+ClaudeBuddyOLED/secrets.h
