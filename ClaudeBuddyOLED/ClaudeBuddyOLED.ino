@@ -332,7 +332,9 @@ static void drawInfo() {
   if (batteryCharging())   ln("bat %.2fv carregando", batteryVolts());
   else if (batteryValid()) ln("bat %.2fv  %d%%", batteryVolts(), batteryPercent());
   else                     ln("bat: lendo...");
-  ln("ota %s", otaStatus());
+  if (otaActive())         ln("ota %s", otaStatus());   // wifi... / IP
+  else if (otaAvailable()) ln("ota off (long=on)");
+  else                     ln("ota: sem wifi");
   if (!bleConnected()) {
     ln("emparelhar:");
     ln("Desktop>Dev>Buddy");
@@ -400,7 +402,7 @@ void setup() {
   petNameLoad();
   buddyInit();
   startBt();
-  otaInit(btName);          // WiFi OTA (inerte sem secrets.h válido)
+  otaInit(btName);          // registra OTA (WiFi sobe só no modo OTA — Info+long)
   lastInteractMs = millis();
 
   // Splash
@@ -491,6 +493,7 @@ void loop() {
     } else {  // BTN_LONG fora de prompt
       if (screen == SCR_HOME)       buddyNextSpecies();
       else if (screen == SCR_STATS) dataSetDemo(!dataDemo());
+      else if (screen == SCR_INFO)  otaToggle();   // liga/desliga modo OTA
       wake();
     }
   }
