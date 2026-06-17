@@ -7,9 +7,7 @@
 #define VBAT_FACTOR  4.9f  // (390k+100k)/100k — ajuste fino contra multímetro
 
 static float vbat  = 0.0f; // tensão suavizada (V)
-static float vslow = 0.0f; // baseline lenta p/ detectar tendência
 static bool  have  = false;
-static bool  charging = false;
 
 void batteryInit() {
   analogReadResolution(12);
@@ -31,21 +29,12 @@ static float readOnce() {
 void batteryPoll() {
   float v = readOnce();
   if (v < 1.0f) return;                       // leitura inválida (sem bateria?)
-  if (!have) { vbat = vslow = v; have = true; return; }
-  vbat  += (v - vbat) * 0.25f;                // suavização rápida
-  vslow += (vbat - vslow) * 0.05f;            // baseline lenta (tendência)
-  // Carregando = tensão subindo, ou alta o bastante (típico de USB/carregador).
-  // Sem pino de status de carga na placa, isto é heurística: como o buddy fica
-  // quase sempre no USB, priorizo detectar "plugado" (limiar 4.05V). Pode dar
-  // falso-positivo curto logo após desplugar (até a tensão cair < ~4.0V).
-  float trend = vbat - vslow;
-  if (trend > 0.008f || vbat >= 4.05f)            charging = true;
-  else if (trend < -0.008f && vbat < 4.00f)       charging = false;
+  if (!have) { vbat = v; have = true; return; }
+  vbat += (v - vbat) * 0.25f;                 // suavização exponencial
 }
 
 bool  batteryValid() { return have; }
 float batteryVolts() { return vbat; }
-bool  batteryCharging() { return have && charging; }
 
 // Curva de descarga LiPo (1 célula) — pares {tensão, %} em ordem decrescente.
 int batteryPercent() {
@@ -70,7 +59,7 @@ int batteryPercent() {
 }
 
 bool batteryLow() {
-  if (!have || batteryCharging()) return false;
+  if (!have) return false;
   int p = batteryPercent();
   return p >= 0 && p <= 12;
 }

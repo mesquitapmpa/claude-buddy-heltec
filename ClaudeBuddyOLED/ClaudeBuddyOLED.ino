@@ -209,8 +209,8 @@ static void drawNotice() {
 }
 
 // Indicador de bateria no canto superior direito (corpo 14x7 + terminal),
-// com o percentual numérico à esquerda. Em descarga o preenchimento é
-// proporcional ao % (e pisca se baixa). Carregando, mostra um raio no corpo.
+// com o percentual numérico à esquerda. Mostra só o NÍVEL: preenchimento
+// proporcional ao % (pisca quando baixa). Sem indicação de carregando.
 static void drawBatteryIcon(int x, int y) {
   if (!batteryValid()) return;
   // Percentual à esquerda do ícone, alinhado à direita até x-2.
@@ -220,14 +220,6 @@ static void drawBatteryIcon(int x, int y) {
   display.setCursor(x - (int)strlen(pb) * 6 - 2, y); display.print(pb);
   display.drawRect(x, y, 14, 7, SSD1306_WHITE);
   display.drawFastVLine(x + 14, y + 2, 3, SSD1306_WHITE);   // terminal +
-  if (batteryCharging()) {
-    // Raio em zigue-zague dentro do corpo (12x5 a partir de x+1,y+1).
-    int bx = x + 1, by = y + 1;
-    display.drawLine(bx + 7, by,     bx + 3, by + 2, SSD1306_WHITE);
-    display.drawLine(bx + 3, by + 2, bx + 6, by + 2, SSD1306_WHITE);
-    display.drawLine(bx + 6, by + 2, bx + 2, by + 4, SSD1306_WHITE);
-    return;
-  }
   int fill = (int)((pct / 100.0f) * 12 + 0.5f);
   if (fill < 0) fill = 0; if (fill > 12) fill = 12;
   bool blink = batteryLow() && (millis() / 500) % 2;        // pisca se baixa
@@ -329,9 +321,8 @@ static void drawInfo() {
   ln("link %s%s", dataScenarioName(), bleSecure() ? " (cripto)" : "");
   uint32_t up = millis() / 1000;
   ln("up %luh%02lum  h%uK", up/3600, (up/60)%60, ESP.getFreeHeap()/1024);
-  if (batteryCharging())   ln("bat %.2fv carregando", batteryVolts());
-  else if (batteryValid()) ln("bat %.2fv  %d%%", batteryVolts(), batteryPercent());
-  else                     ln("bat: lendo...");
+  if (batteryValid()) ln("bat %.2fv  %d%%", batteryVolts(), batteryPercent());
+  else                ln("bat: lendo...");
   if (otaActive())         ln("ota %s", otaStatus());   // wifi... / IP
   else if (otaAvailable()) ln("ota off (long=on)");
   else                     ln("ota: sem wifi");

@@ -12,4 +12,3 @@ bool  batteryValid();     // já há uma leitura boa?
 float batteryVolts();     // tensão suavizada (V)
 int   batteryPercent();   // 0..100 pela curva de descarga LiPo
 bool  batteryLow();       // <= 12% (aviso)
-bool  batteryCharging();  // heurística: tensão alta = USB/carregando
